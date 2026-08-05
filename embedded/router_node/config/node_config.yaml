@@ -1,0 +1,42 @@
+# Example Router Node Configuration
+# Each physical node gets its own config file
+node:
+  id: "router_f1_lobby"
+  type: "INTERSECTION"
+  floor: 1
+  position: [100.0, 50.0]
+  capacity: 50
+
+neighbors:
+  - "router_f1_corridor_main"
+  - "stairwell_a_f1"
+  - "elevator_f1"
+
+hardware:
+  camera:
+    type: "csi"  # csi, usb, or video_file
+    device: "/dev/video0"
+    resolution: [640, 480]
+    fps: 30
+  
+  mesh:
+    protocol: "esp_now"  # esp_now or thread
+    channel: 1
+    encryption_key: "change_me_in_production"
+  
+  actuators:
+    signage:
+      type: "ws2812b"  # ws2812b or hub75
+      gpio_pin: 18
+      num_leds: 64
+    door:
+      type: "relay"
+      gpio_pin: 23
+    audio:
+      type: "i2s"
+      sample_rate: 44100
+
+model:
+  path: "models/policy.onnx"
+  use_tensorrt: true
+  max_latency_ms: 10

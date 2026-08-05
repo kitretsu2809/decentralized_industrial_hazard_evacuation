@@ -1,0 +1,48 @@
+# MAPPO Training Configuration
+# Optimized for 4GB NVIDIA GPU
+
+model:
+  gat_layers: 2
+  gat_heads: 4
+  embedding_dim: 64
+  actor_hidden: [128, 64]
+  critic_hidden: [256, 128]
+
+training:
+  algorithm: MAPPO
+  framework: ray_rllib
+  num_workers: 2
+  batch_size: 256
+  sgd_minibatch_size: 64
+  num_sgd_iter: 10
+  gradient_accumulation_steps: 4
+  mixed_precision: true
+  lr_actor: 0.0003
+  lr_critic: 0.001
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_param: 0.2
+  entropy_coeff: 0.01
+  max_grad_norm: 0.5
+  max_episodes: 10000
+  checkpoint_interval: 500
+
+reward:
+  alpha_evacuated: 10.0
+  beta_casualty: -50.0
+  gamma_congestion: -2.0
+  delta_time: -0.1
+  epsilon_vertical_efficiency: 5.0
+
+curriculum:
+  enabled: true
+  stages:
+    - {floors: 1, threats: 1, crowd_ratio: 0.3, episodes: 1500}
+    - {floors: 1, threats: 2, crowd_ratio: 0.6, episodes: 2000}
+    - {floors: 3, threats: 1, crowd_ratio: 0.5, episodes: 2500}
+    - {floors: 3, threats: 3, crowd_ratio: 1.0, episodes: 4000}
+
+environment:
+  max_steps: 500
+  num_evacuees: 200
+  max_neighbors: 6

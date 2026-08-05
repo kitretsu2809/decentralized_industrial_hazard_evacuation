@@ -1,0 +1,24 @@
+name: LBP Office Building
+floors:
+  1:
+    nodes:
+      - id: lobby
+        type: INTERSECTION
+        floor: 1
+        capacity: 50
+        position: [100.0, 50.0]
+        is_cross_floor: false
+      - id: main_exit
+        type: EXIT
+        floor: 1
+        capacity: 100
+        position: [100.0, 100.0]
+        is_cross_floor: false
+    edges:
+      - id: e_f1_0
+        source: lobby
+        target: main_exit
+        distance: 10.0
+        width: 3.0
+        max_throughput: 15
+cross_floor_edges: []

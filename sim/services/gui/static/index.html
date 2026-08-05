@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LBP Evacuation System</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header class="header">
+        <div class="logo">
+            <h1>LBP Evacuation System</h1>
+            <div class="status-indicator" id="connection-status"></div>
+        </div>
+        <div class="floor-tabs" id="floor-tabs">
+            <!-- Populated dynamically -->
+        </div>
+    </header>
+
+    <main class="main-container">
+        <section class="canvas-section">
+            <div class="canvas-container">
+                <canvas id="building-canvas" width="800" height="600"></canvas>
+            </div>
+            
+            <div class="metrics-bar">
+                <div class="metric">
+                    <span class="label">Evacuated</span>
+                    <span class="value" id="metric-evacuated">0</span><span class="total">/0</span>
+                </div>
+                <div class="metric">
+                    <span class="label">Casualties</span>
+                    <span class="value casualty" id="metric-casualties">0</span>
+                </div>
+                <div class="metric">
+                    <span class="label">Congestion</span>
+                    <div class="progress-bar"><div class="progress" id="metric-congestion"></div></div>
+                </div>
+                <div class="metric">
+                    <span class="label">Time</span>
+                    <span class="value" id="metric-time">00:00</span>
+                </div>
+                <div class="active-threats" id="active-threats">
+                    <!-- Threat badges go here -->
+                </div>
+            </div>
+        </section>
+
+        <aside class="sidebar">
+            <div class="panel">
+                <h2>DISASTER INJECTION</h2>
+                <div class="control-group">
+                    <label>Threat Type</label>
+                    <select id="threat-type">
+                        <option value="FIRE">🔥 Fire</option>
+                        <option value="COLLAPSE">🏗️ Collapse</option>
+                        <option value="GAS">💨 Gas Leak</option>
+                        <option value="WATER">💧 Flood</option>
+                        <option value="ANIMAL">🦁 Animal</option>
+                        <option value="WEAPON">⚔️ Weapon</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label>Intensity <span id="intensity-val">0.8</span></label>
+                    <input type="range" id="threat-intensity" min="0.1" max="1.0" step="0.1" value="0.8">
+                </div>
+                <div class="control-group">
+                    <label>Spread Rate <span id="spread-val">0.1</span></label>
+                    <input type="range" id="threat-spread" min="0.0" max="0.5" step="0.05" value="0.1">
+                </div>
+                <p class="helper-text">Click a node on the map to inject.</p>
+                <div id="selected-node-info" class="hidden">
+                    Selected: <span id="selected-node-id">None</span>
+                    <button id="btn-inject" class="btn-primary">Inject Disaster</button>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h2>SIMULATION</h2>
+                <div class="playback-controls">
+                    <button id="btn-play" class="icon-btn" title="Play">▶</button>
+                    <button id="btn-pause" class="icon-btn" title="Pause">⏸</button>
+                    <button id="btn-step" class="icon-btn" title="Step">⏭</button>
+                    <button id="btn-reset" class="icon-btn" title="Reset">↻ Reset</button>
+                </div>
+                <div class="control-group mt-3">
+                    <label>Speed</label>
+                    <select id="sim-speed">
+                        <option value="0.5">0.5x</option>
+                        <option value="1.0" selected>1.0x</option>
+                        <option value="2.0">2.0x</option>
+                        <option value="5.0">5.0x</option>
+                    </select>
+                </div>
+            </div>
+        </aside>
+    </main>
+
+    <script src="/static/js/websocket.js"></script>
+    <script src="/static/js/metrics.js"></script>
+    <script src="/static/js/canvas_renderer.js"></script>
+    <script src="/static/js/floor_manager.js"></script>
+    <script src="/static/js/controls.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            // Load initial building graph
+            const res = await fetch('/api/building');
+            const buildingData = await res.json();
+            
+            if (buildingData.status === 'error') {
+                console.error("Failed to load building data:", buildingData.message);
+                // Start with empty data for now
+            }
+
+            const renderer = new BuildingRenderer('building-canvas');
+            renderer.init(buildingData);
+
+            const floorManager = new FloorManager(renderer);
+            floorManager.init();
+
+            const metricsPanel = new MetricsPanel();
+            
+            const wsUrl = `ws://${window.location.host}/ws/state`;
+            const wsManager = new WebSocketManager(wsUrl);
+            
+            wsManager.onStateUpdate = (state) => {
+                renderer.updateState(state);
+                floorManager.updateFloorIndicators(state);
+                metricsPanel.update(state);
+            };
+            wsManager.connect();
+
+            const controlPanel = new ControlPanel(wsManager);
+            controlPanel.init();
+
+            renderer.onNodeSelected = (nodeId, floor) => {
+                controlPanel.onNodeSelected(nodeId, floor);
+            };
+            
+            renderer.startAnimation();
+        });
+    </script>
+</body>
+</html>

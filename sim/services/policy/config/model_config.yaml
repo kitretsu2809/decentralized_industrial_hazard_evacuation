@@ -1,0 +1,20 @@
+encoder:
+  type: gat  # or 'mlp' for fallback
+  node_feature_dim: 8
+  embedding_dim: 64
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.1
+
+actor:
+  max_actions: 6
+  hidden_dims: [128, 64]
+
+critic:
+  num_agents: 20
+  hidden_dims: [256, 128]
+
+inference:
+  use_onnx: false  # true when ONNX model is available
+  model_path: null
+  max_latency_ms: 10.0

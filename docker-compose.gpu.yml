@@ -1,0 +1,34 @@
+# GPU overlay for training service
+# Usage: docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile train up
+
+services:
+  training:
+    build:
+      context: .
+      dockerfile: sim/services/training/Dockerfile.gpu
+    container_name: lbp-training
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - ./core:/app/core:ro
+      - ./sim/hal_impl:/app/hal_impl:ro
+      - ./data:/app/data
+      - ./sim/services/training/checkpoints:/app/checkpoints
+      - ./sim/services/training/config:/app/config:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+      environment:
+        condition: service_started
+    environment:
+      - REDIS_URL=${REDIS_URL}
+      - WANDB_API_KEY=${WANDB_API_KEY:-}
+      - WANDB_PROJECT=${WANDB_PROJECT}
+      - GPU_MEMORY_LIMIT=${GPU_MEMORY_LIMIT}
+      - PYTHONPATH=/app
+    profiles: ["train"]

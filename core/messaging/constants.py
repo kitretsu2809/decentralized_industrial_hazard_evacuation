@@ -1,0 +1,20 @@
+# Redis channels
+CHANNEL_ENV_STATE = 'lbp:env:state'
+CHANNEL_HAZARD_UPDATE = 'lbp:env:hazard_update'
+CHANNEL_POLICY_ACTION = 'lbp:env:action'
+CHANNEL_GUI_CONTROL = 'lbp:gui:control'
+CHANNEL_DISASTER_INJECT = 'lbp:gui:inject'
+CHANNEL_PERCEPTION_DETECT = 'lbp:perception:detect'
+
+# Application constants
+DEFAULT_STATE_FPS = 10
+DEFAULT_REDIS_URL = 'redis://localhost:6379'
+MAX_HAZARD = 1.0
+MIN_HAZARD = 0.0
+
+# Thresholds
+IMPASSABLE_THRESHOLD = 0.95
+ELEVATOR_DISABLE_THRESHOLD = 0.3
+STAIRWELL_CONGESTION_WARNING = 0.7
+STAIRWELL_CONGESTION_CRITICAL = 0.9
+MAX_INFERENCE_LATENCY_MS = 10.0

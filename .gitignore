@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker
+.docker/
+
+# Data
+data/models/*.onnx
+data/models/*.pt
+data/fds_exports/*.csv
+!data/fds_exports/README.md
+sim/services/perception/data/videos/*.mp4
+sim/services/perception/data/videos/*.avi
+!sim/services/perception/data/videos/README.md
+
+# Training
+sim/services/training/checkpoints/*.pt
+sim/services/training/checkpoints/*.onnx
+!sim/services/training/checkpoints/.gitkeep
+wandb/
+
+# Environment
+.env.local
+.env.production
+
+# OS
+.DS_Store
+Thumbs.db
+
+# PDFs (project docs, not code)
+*.pdf

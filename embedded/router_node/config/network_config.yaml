@@ -1,0 +1,16 @@
+# Mesh Network Configuration
+network:
+  protocol: "esp_now"  # or "thread"
+  channel: 1
+  max_hops: 3
+  broadcast_interval_ms: 100
+  heartbeat_interval_ms: 1000
+  encryption:
+    enabled: true
+    algorithm: "aes-128-ccm"
+    key: "change_this_key_in_production_1234"
+  
+  topology:
+    # Auto-discovered, but can be pre-configured
+    pre_configured: false
+    discovery_timeout_s: 30
