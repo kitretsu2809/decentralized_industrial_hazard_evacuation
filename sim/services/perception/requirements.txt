@@ -1,6 +1,9 @@
+# Perception service — use CPU-only torch (much smaller download)
+# Install torch CPU first via PyTorch index, then the rest
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
 ultralytics>=8.0
 opencv-python-headless>=4.8
 numpy>=1.24
-torch>=2.0
 redis>=5.0
 pydantic>=2.0

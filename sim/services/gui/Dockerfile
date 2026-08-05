@@ -3,7 +3,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 COPY sim/services/gui/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --timeout 300 --retries 3 -r requirements.txt
 
 # We need the core module since app.py imports from it
 # In a real environment, it might be installed as a package,
