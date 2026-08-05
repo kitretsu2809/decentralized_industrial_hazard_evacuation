@@ -99,22 +99,42 @@ class EnvironmentService:
                         self.env.reset()
                         self.latest_actions = {agent: [0]*(len(self.env.action_spaces[agent].nvec)) for agent in self.env.agents}
                     
+                    # Build NodeStateMsgs
+                    nodes_state = {}
+                    bg = self.env.building_graph
+                    for n_id, n in self.building.all_nodes.items():
+                        edge_states = {}
+                        sign_directions = {}
+                        for edge in bg.get_active_edges(n_id):
+                            edge_states[edge.id] = edge.state.name
+                            sign_directions[edge.id] = "NONE"
+                        
+                        nodes_state[n_id] = {
+                            "node_id": n_id,
+                            "floor": n.floor,
+                            "hazard_score": n.hazard_score,
+                            "crowd_count": self.env.evacuees_at_node.get(n_id, 0),
+                            "capacity": n.capacity,
+                            "node_type": n.type.name,
+                            "position": list(n.position),
+                            "edge_states": edge_states,
+                            "sign_directions": sign_directions
+                        }
+
                     # Create EnvironmentStateMsg
                     state = EnvironmentStateMsg(
                         step=self.env.current_step,
-                        nodes={},
                         timestamp=time.time(),
-                        evacuees_safe=self.env.evacuated,
-                        evacuees_casualty=self.env.casualties
+                        nodes=nodes_state,
+                        evacuees=[],
+                        active_threats=[],
+                        metrics={
+                            "total_people": self.env.total_evacuees,
+                            "evacuated": self.env.evacuated,
+                            "casualties": self.env.casualties
+                        }
                     )
                     
-                    for n_id, n in self.building.all_nodes.items():
-                        state.nodes[n_id] = {
-                            "hazard_score": n.hazard_score,
-                            "occupancy": self.env.evacuees_at_node.get(n_id, 0),
-                            "type": n.type.name
-                        }
-                        
                     self.bus.publish_state(state)
                     
                 elapsed = time.time() - start_time
