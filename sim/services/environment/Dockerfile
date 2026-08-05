@@ -10,4 +10,4 @@ COPY sim/services/environment/config/ ./sim/services/environment/config/
 
 # Core is mounted as volume at /app/core
 
-CMD ["python", "-m", "sim.services.environment.src.event_bus"]
+CMD ["python", "-m", "sim.services.environment.src.main"]

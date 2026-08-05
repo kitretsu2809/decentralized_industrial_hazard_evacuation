@@ -15,7 +15,7 @@ import redis.asyncio as aioredis
 # Assumes PYTHONPATH includes the LBP project root
 from core.messaging.constants import CHANNEL_ENV_STATE, CHANNEL_GUI_CONTROL, CHANNEL_DISASTER_INJECT
 from core.messaging.schemas import DisasterInjectionMsg, SimControlMsg
-from src.disaster_injector import DisasterInjector
+from sim.services.gui.src.disaster_injector import DisasterInjector
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

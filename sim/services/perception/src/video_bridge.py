@@ -86,8 +86,10 @@ class VideoBridge:
         return self.feeds
         
 if __name__ == "__main__":
+    import os
     print("Starting Video Bridge...")
-    bridge = VideoBridge()
+    redis_url = os.environ.get("REDIS_URL", DEFAULT_REDIS_URL)
+    bridge = VideoBridge(redis_url=redis_url)
     # Keep main thread alive
     try:
         while True:

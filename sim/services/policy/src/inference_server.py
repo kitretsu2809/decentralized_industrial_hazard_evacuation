@@ -102,6 +102,8 @@ class PolicyInferenceServer:
             logger.warning(f"Inference latency exceeded 10ms: {latency:.2f}ms")
 
 if __name__ == "__main__":
+    import os
     logging.basicConfig(level=logging.INFO)
-    server = PolicyInferenceServer()
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+    server = PolicyInferenceServer(redis_url=redis_url)
     server.start()
