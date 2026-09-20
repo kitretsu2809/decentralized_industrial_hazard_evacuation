@@ -132,25 +132,6 @@ lbp-redis         →  Redis Pub/Sub message bus (replaces network comms in sim)
 
 ---
 
-## Patent Claims Summary
-
-> Full specification: [`docs/PATENT_SPECIFICATION_AND_CLAIMS.md`](docs/PATENT_SPECIFICATION_AND_CLAIMS.md)
-
-| Claim | Description |
-|---|---|
-| **1 (Independent)** | Edge router nodes executing coupled spatial GAT + GRU recurrent state transition with hardware reflexive life-safety overrides |
-| **2** | O(\|Nᵢ\|) topology-bounded attention complexity invariant to building scale |
-| **3** | 4-Byte Sparse Delta-Bitmap Gossip Protocol `[Node ID, ΔH, Δρ, Status]` event-triggered by Δ > ε |
-| **4** | Multi-floor thermal stack-effect vertical propagation modeling |
-| **5** | Temporal hysteresis filter (τ_dwell) preventing erratic sign toggling |
-| **6** | INT8 ONNX quantization with <20 ms latency and <5 W power |
-| **7** | MAPPO with Centralized Training and Decentralized Execution (CTDE) |
-| **8** | Quantized YOLOv8 edge-assisted vision crowd density integration |
-| **9** | Cooperative anti-bottleneck density variance balancing |
-| **10** | Autonomous offline fallback via local Dijkstra hazard-weighted routing |
-
----
-
 ## Project Structure
 
 ```
