@@ -20,7 +20,6 @@
 - [Overview](#overview)
 - [Key Results](#key-results)
 - [System Architecture](#system-architecture)
-- [Patent Claims Summary](#patent-claims-summary)
 - [Project Structure](#project-structure)
 - [Quick Start](#quick-start)
 - [Training](#training)
@@ -184,11 +183,6 @@ decentralized_industrial_hazard_evacuation/
 │   └── test_in_situ_simulation_training.py
 │
 ├── docs/
-│   ├── PATENT_SPECIFICATION_AND_CLAIMS.md
-│   ├── patent_simulation_evaluation_report.md
-│   ├── presentation_slides.md
-│   ├── architecture.md
-│   ├── scenarios.md
 │   └── figures/
 │       ├── graph_a_scalability_airtime.png
 │       ├── graph_b_severed_comm_survival.png
@@ -356,6 +350,6 @@ MIT License — see [LICENSE](LICENSE) for details.
 <div align="center">
 
 **Developed for academic research and patent proof-of-concept demonstration.**  
-*If you use this code, please cite the project and reference the patent specification in `docs/PATENT_SPECIFICATION_AND_CLAIMS.md`.*
+*If you use this code, please cite this repository and the associated project research.*
 
 </div>
