@@ -171,9 +171,28 @@ class BuildingGraph:
                 "state": e.state.value
             })
             
+        floors = {}
+        for level, floor in self.building.floors.items():
+            floors[level] = {
+                "level": level,
+                "nodes": [n.id for n in floor.nodes.values()],
+                "edges": [{
+                    "id": e.id,
+                    "source": e.source,
+                    "target": e.target,
+                    "state": e.state.value,
+                    "distance": e.distance,
+                    "width": e.width,
+                    "has_door": e.has_door
+                } for e in floor.edges],
+                "exits": floor.exits
+            }
+
         return {
             "building_name": self.building.name,
             "total_capacity": self.building.total_capacity,
             "nodes": nodes,
-            "edges": edges
+            "edges": edges,
+            "floors": floors
         }
+

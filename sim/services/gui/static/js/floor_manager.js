@@ -1,9 +1,14 @@
 class FloorManager {
     constructor(renderer) {
         this.renderer = renderer;
-        this.floors = [1, 2, 3]; // Default, will update from state/building
+        this.floors = [1, 2, 3];
         this.currentFloor = 1;
-        this.floorHazards = {};  // floor -> max hazard
+        this.floorHazards = {};
+        this.floorNames = {
+            1: "L1: Process Units & Tank Farm",
+            2: "L2: Catwalks & SCADA",
+            3: "L3: Flare Stack Platform"
+        };
     }
 
     init() {
@@ -19,7 +24,8 @@ class FloorManager {
         this.floors.forEach(floor => {
             const btn = document.createElement('button');
             btn.className = `floor-btn ${floor === this.currentFloor ? 'active' : ''}`;
-            btn.innerHTML = `Floor ${floor} <span class="hazard-dot" id="hazard-dot-${floor}"></span>`;
+            const label = this.floorNames[floor] || `Floor ${floor}`;
+            btn.innerHTML = `${label} <span class="hazard-dot" id="hazard-dot-${floor}"></span>`;
             btn.onclick = () => this.switchFloor(floor);
             container.appendChild(btn);
         });
@@ -27,7 +33,7 @@ class FloorManager {
         // "All" button for cross-section
         const allBtn = document.createElement('button');
         allBtn.className = `floor-btn ${this.currentFloor === 'ALL' ? 'active' : ''}`;
-        allBtn.innerText = 'All (Cross)';
+        allBtn.innerHTML = `All Units (3D Elevation) <span class="hazard-dot" id="hazard-dot-all"></span>`;
         allBtn.onclick = () => this.showCrossSection();
         container.appendChild(allBtn);
     }
@@ -54,7 +60,6 @@ class FloorManager {
                     btn.classList.remove('active');
                 }
             } else {
-                // The 'All' button
                 if (this.currentFloor === 'ALL') {
                     btn.classList.add('active');
                 } else {
@@ -66,42 +71,34 @@ class FloorManager {
 
     updateFloorIndicators(state) {
         if (!state || !state.nodes) return;
-        
-        // Reset max hazards
-        this.floors.forEach(f => { this.floorHazards[f] = 0; });
-        
-        // Calculate new max hazards
-        for (const nodeData of Object.values(state.nodes)) {
-            const f = nodeData.floor;
-            if (!this.floors.includes(f)) {
-                this.floors.push(f);
-                this.floors.sort();
-                this.renderTabs(); // Re-render if new floor discovered
+
+        this.floorHazards = { 1: 0, 2: 0, 3: 0, 'all': 0 };
+
+        Object.values(state.nodes).forEach(node => {
+            const f = node.floor;
+            const h = node.hazard_score || 0;
+            if (this.floorHazards[f] !== undefined) {
+                this.floorHazards[f] = Math.max(this.floorHazards[f], h);
             }
-            if (nodeData.hazard_score > (this.floorHazards[f] || 0)) {
-                this.floorHazards[f] = nodeData.hazard_score;
-            }
-        }
-        
-        // Update dots
+            this.floorHazards['all'] = Math.max(this.floorHazards['all'], h);
+        });
+
+        const getStatusColor = (h) => {
+            if (h <= 0.01) return 'var(--status-safe)';
+            if (h <= 0.3) return 'var(--status-caution)';
+            return 'var(--status-danger)';
+        };
+
         this.floors.forEach(floor => {
             const dot = document.getElementById(`hazard-dot-${floor}`);
             if (dot) {
-                const h = this.floorHazards[floor];
-                if (h <= 0.3) {
-                    dot.style.background = 'var(--status-safe)';
-                    dot.style.boxShadow = 'none';
-                    dot.style.animation = 'none';
-                } else if (h <= 0.7) {
-                    dot.style.background = 'var(--status-caution)';
-                    dot.style.boxShadow = '0 0 5px var(--status-caution)';
-                    dot.style.animation = 'none';
-                } else {
-                    dot.style.background = 'var(--status-danger)';
-                    dot.style.boxShadow = '0 0 10px var(--status-danger)';
-                    dot.style.animation = 'pulse 1s infinite';
-                }
+                dot.style.background = getStatusColor(this.floorHazards[floor]);
             }
         });
+
+        const allDot = document.getElementById('hazard-dot-all');
+        if (allDot) {
+            allDot.style.background = getStatusColor(this.floorHazards['all']);
+        }
     }
 }

@@ -1,49 +1,83 @@
-# Python
+# ─── Python ──────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
+*.egg
 *.egg-info/
 dist/
 build/
-*.egg
+.eggs/
 
-# Virtual environments
+# ─── Virtual Environments ─────────────────────────────────────────────────────
 .venv/
 venv/
 env/
+.conda/
 
-# IDE
+# ─── IDE / Editor ─────────────────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
 *.swo
+*.sublime-workspace
 
-# Docker
-.docker/
-
-# Data
-data/models/*.onnx
-data/models/*.pt
-data/fds_exports/*.csv
-!data/fds_exports/README.md
-sim/services/perception/data/videos/*.mp4
-sim/services/perception/data/videos/*.avi
-!sim/services/perception/data/videos/README.md
-
-# Training
-sim/services/training/checkpoints/*.pt
-sim/services/training/checkpoints/*.onnx
-!sim/services/training/checkpoints/.gitkeep
-wandb/
-
-# Environment
-.env.local
-.env.production
-
-# OS
+# ─── OS junk ──────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# PDFs (project docs, not code)
-*.pdf
+# ─── Secrets & Local Environment ─────────────────────────────────────────────
+.env
+.env.local
+.env.production
+.env.*.local
+*.pem
+*.key
+*.secret
+
+# ─── Docker ───────────────────────────────────────────────────────────────────
+.docker/
+
+# ─── ML Model Weights & Exports ───────────────────────────────────────────────
+# Large binary model files – train locally; use Git LFS or HuggingFace Hub for sharing
+checkpoints/*.pt
+checkpoints/*.onnx
+data/models/*.onnx
+data/models/*.pt
+
+# ─── Training Artifacts / W&B ─────────────────────────────────────────────────
+wandb/
+lightning_logs/
+mlruns/
+runs/
+
+# ─── Perception Data (Large Video Files) ──────────────────────────────────────
+sim/services/perception/data/videos/*.mp4
+sim/services/perception/data/videos/*.avi
+sim/services/perception/data/videos/*.mkv
+!sim/services/perception/data/videos/README.md
+
+# ─── FDS Fire Dynamics Exports ────────────────────────────────────────────────
+data/fds_exports/*.csv
+data/fds_exports/*.smv
+data/fds_exports/*.fds
+!data/fds_exports/README.md
+
+# ─── Generated Figures (PDFs – auto-generated, PNGs tracked) ─────────────────
+docs/figures/*.pdf
+
+# ─── Graphify Knowledge Graph Output ──────────────────────────────────────────
+graphify-out/
+
+# ─── PROGRESS Folder (local scratchpad, personal notes) ──────────────────────
+PROGRESS/
+
+# ─── pytest / coverage ────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# ─── Implementation plan (internal agent file) ────────────────────────────────
+implementation_plan.md

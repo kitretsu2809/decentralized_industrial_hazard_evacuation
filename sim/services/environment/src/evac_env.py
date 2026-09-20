@@ -21,7 +21,7 @@ class EvacuationEnv(ParallelEnv):
         # Router Nodes only (INTERSECTION, STAIRWELL)
         self.possible_agents = [
             n_id for n_id, n in self.building.all_nodes.items() 
-            if n.type in (NodeType.INTERSECTION, NodeType.STAIRWELL)
+            if n.type in (NodeType.INTERSECTION, NodeType.STAIRWELL, NodeType.CORRIDOR)
         ]
         self.agents = self.possible_agents.copy()
         
@@ -61,11 +61,14 @@ class EvacuationEnv(ParallelEnv):
         self.current_step = 0
         self.casualties = 0
         self.evacuated = 0
-        self.fire_model.clear_all()
+        # self.fire_model.clear_all()  # Removed to keep user-injected disasters
+        self.last_flows = []
         
-        # Reset edge states
+        # Reset edge states and signs
+        self.edge_signs = {}
         for edge in self.building.all_edges:
             edge.state = EdgeState.OPEN
+            self.edge_signs[edge.id] = False
             
         # Distribute evacuees randomly in ROOMs and CORRIDORs
         self.evacuees_at_node = {n_id: 0 for n_id in self.building.all_nodes.keys()}
@@ -76,15 +79,6 @@ class EvacuationEnv(ParallelEnv):
             counts = np.random.multinomial(self.total_evacuees, [1/len(eligible_nodes)]*len(eligible_nodes))
             for i, n_id in enumerate(eligible_nodes):
                 self.evacuees_at_node[n_id] = counts[i]
-                
-        # Inject random fire
-        if options and options.get('fire_node'):
-            fire_node = options['fire_node']
-        else:
-            fire_node = np.random.choice(eligible_nodes) if eligible_nodes else None
-        
-        if fire_node:
-            self.fire_model.inject_fire(fire_node, intensity=0.8, spread_rate=0.1)
 
         observations = self._get_obs()
         infos = {agent: {} for agent in self.agents}
@@ -148,9 +142,15 @@ class EvacuationEnv(ParallelEnv):
                     # Simplify: mark as closed (in real MARL might use emergency seal)
                     # We just use locked for now
                     edge.state = EdgeState.LOCKED
+                    self.edge_signs[edge.id] = False
                 elif e_act == 0: # ALLOW
                     if edge.state == EdgeState.LOCKED:
                         edge.state = EdgeState.OPEN
+                    self.edge_signs[edge.id] = False
+                elif e_act == 1: # REDIRECT
+                    if edge.state == EdgeState.LOCKED:
+                        edge.state = EdgeState.OPEN
+                    self.edge_signs[edge.id] = True
                         
             # Handle doors
             if door_action == 1:
@@ -163,12 +163,30 @@ class EvacuationEnv(ParallelEnv):
         # 2. Step fire
         self.fire_model.step(dt=1.0)
         
-        # 3. Move evacuees
+        # 2b. Reflexive dynamic signage activation on hazard
+        # Nodes with elevated hazard activate REDIRECT signs on safe egress edges
+        for n_id, node in self.building.all_nodes.items():
+            if node.hazard_score > 0.1:
+                for nbr_id in self.building_graph.get_neighbors(n_id):
+                    edge = self.building_graph.get_edge_between(n_id, nbr_id)
+                    nbr_node = self.building.get_node(nbr_id)
+                    if edge and nbr_node and edge.state == EdgeState.OPEN:
+                        if nbr_node.hazard_score < node.hazard_score:
+                            self.edge_signs[edge.id] = True
+
         new_evacuees = {n_id: 0 for n_id in self.building.all_nodes.keys()}
         evacuees_moved_through = {agent: 0 for agent in self.agents}
+        self.last_flows = []
+        
+        has_active_threats = len(self.fire_model.get_fire_sources()) > 0
         
         for n_id, count in self.evacuees_at_node.items():
             if count == 0:
+                continue
+                
+            if not has_active_threats:
+                # Nobody moves if there is no emergency
+                new_evacuees[n_id] += count
                 continue
                 
             node = self.building.get_node(n_id)
@@ -177,41 +195,75 @@ class EvacuationEnv(ParallelEnv):
                 self.evacuated += count
                 continue
                 
-            if node.hazard_score > 0.95:
+            if node.hazard_score > 0.75:
                 # Become casualties
                 self.casualties += count
                 continue
                 
-            # Find best neighbor to move to based on shortest path to exit
-            # We cache paths or compute on fly. For simplicity in Env, we compute basic routing
-            paths = self.building_graph.get_all_exit_paths(n_id)
-            if not paths:
-                # Stuck
+            # 3. Crowd dynamics: Weidmann velocity-density curve
+            node_cap = max(1, node.capacity)
+            density = min(1.0, count / node_cap)
+            
+            # Base unimpeded walking speed v0 = 1.34 m/s
+            v_base = 1.34 * max(0.12, 1.0 - 0.85 * density)
+            
+            # Speed degradation due to toxic gas/smoke inhalation and reduced visibility
+            v_eff = v_base * max(0.15, 1.0 - 0.75 * node.hazard_score)
+            
+            # Progressive incapacitation in persistent elevated toxic gas (0.5 < H <= 0.75)
+            if node.hazard_score > 0.50:
+                toxic_casualties = max(0, int(count * 0.08))
+                if toxic_casualties > 0:
+                    self.casualties += toxic_casualties
+                    count -= toxic_casualties
+                    if count <= 0:
+                        continue
+            
+            # Find best neighbor to move to based on local knowledge & signage
+            import random
+            active_edges = self.building_graph.get_active_edges(n_id)
+            if not active_edges:
                 new_evacuees[n_id] += count
                 continue
                 
-            best_path, _ = paths[0]
-            if len(best_path) > 1:
-                next_node = best_path[1]
-                edge = self.building_graph.get_edge_between(n_id, next_node)
-                
-                if edge and edge.state == EdgeState.OPEN:
-                    # Move bounded by throughput and capacity
-                    tgt_node = self.building.get_node(next_node)
-                    tgt_capacity = tgt_node.capacity - new_evacuees.get(next_node, 0)
-                    
-                    can_move = min(count, edge.max_throughput, tgt_capacity)
-                    can_move = max(0, can_move)
-                    
-                    new_evacuees[next_node] += can_move
-                    new_evacuees[n_id] += (count - can_move)
-                    
-                    if next_node in evacuees_moved_through:
-                        evacuees_moved_through[next_node] += can_move
-                else:
-                    # Blocked, stay
-                    new_evacuees[n_id] += count
+            # Filter edges with REDIRECT sign
+            redirect_edges = [e for e in active_edges if self.edge_signs.get(e.id, False)]
+            
+            if redirect_edges:
+                edge = random.choice(redirect_edges)
             else:
+                # Prioritize lower-hazard open edges with distance heuristic
+                def edge_score(e):
+                    nbr = e.target if e.source == n_id else e.source
+                    nbr_n = self.building.get_node(nbr)
+                    haz = nbr_n.hazard_score if nbr_n else 1.0
+                    return haz + (e.distance / 120.0)
+                active_edges.sort(key=edge_score)
+                edge = active_edges[0]
+                
+            next_node = edge.target if edge.source == n_id else edge.source
+            
+            if edge.state == EdgeState.OPEN:
+                # Move bounded by throughput, destination capacity, and distance physics
+                tgt_node = self.building.get_node(next_node)
+                tgt_capacity = tgt_node.capacity - new_evacuees.get(next_node, 0)
+                
+                # Flow physics governed by corridor width, effective speed, and distance
+                dist_factor = max(0.35, min(1.5, 22.0 / max(1.0, edge.distance)))
+                flow_physics = max(1, int(edge.width * v_eff * 1.6 * dist_factor))
+                
+                can_move = min(count, edge.max_throughput, tgt_capacity, flow_physics)
+                can_move = max(0, can_move)
+                
+                new_evacuees[next_node] += can_move
+                new_evacuees[n_id] += (count - can_move)
+                if can_move > 0:
+                    self.last_flows.append((n_id, next_node, can_move))
+                
+                if next_node in evacuees_moved_through:
+                    evacuees_moved_through[next_node] += can_move
+            else:
+                # Blocked, stay
                 new_evacuees[n_id] += count
                 
         self.evacuees_at_node = new_evacuees
@@ -224,7 +276,7 @@ class EvacuationEnv(ParallelEnv):
             node = self.building.get_node(agent)
             
             moved = evacuees_moved_through[agent]
-            casualties_here = self.evacuees_at_node[agent] if node.hazard_score > 0.95 else 0
+            casualties_here = self.evacuees_at_node[agent] if node.hazard_score > 0.75 else 0
             
             cap = max(1, node.capacity)
             congestion = min(1.0, self.evacuees_at_node[agent] / cap)

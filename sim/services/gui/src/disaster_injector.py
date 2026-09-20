@@ -15,7 +15,7 @@ class DisasterInjector:
                      metadata: dict = None) -> dict:
         """Inject a disaster into the simulation."""
         
-        valid_threats = ['FIRE', 'COLLAPSE', 'GAS', 'WATER', 'ANIMAL', 'WEAPON']
+        valid_threats = ['FIRE', 'COLLAPSE', 'GAS', 'WATER', 'CHEMICAL_SPILL', 'EXPLOSION', 'ANIMAL', 'WEAPON', 'SCENARIO', 'CLEAR_ALL', 'SET_WIND']
         if threat_type.upper() not in valid_threats:
             raise ValueError(f"Invalid threat type: {threat_type}")
 

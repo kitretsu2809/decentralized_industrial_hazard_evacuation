@@ -53,9 +53,10 @@ class PolicyActionMsg(BaseModel):
     timestamp: float
 
 class DisasterInjectionMsg(BaseModel):
+    threat_id: Optional[str] = None
     threat_type: str
     target_node: str
-    floor: int
+    floor: int = 1
     intensity: float = 0.8
     spread_rate: float = 0.1
     metadata: Dict[str, str] = Field(default_factory=dict)

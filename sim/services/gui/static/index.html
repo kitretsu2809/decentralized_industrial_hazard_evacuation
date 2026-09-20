@@ -3,143 +3,929 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LBP Evacuation System</title>
+    <title>AI Evacuation Command — Industrial Emergency Response</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-base: #05080f;
+            --bg-deep: #080d19;
+            --bg-panel: #0a1020;
+            --bg-card: #0d1628;
+            --bg-card-hover: #111e38;
+            --bg-input: #060b18;
+            --text-primary: #e8edf5;
+            --text-secondary: #8ca0be;
+            --text-muted: #4e6080;
+            --text-dim: #2c3f5c;
+            --blue: #38bdf8;
+            --blue-dim: rgba(56,189,248,0.15);
+            --cyan: #06b6d4;
+            --cyan-dim: rgba(6,182,212,0.12);
+            --amber: #f59e0b;
+            --amber-dim: rgba(245,158,11,0.15);
+            --lime: #84cc16;
+            --safe: #10b981;
+            --safe-dim: rgba(16,185,129,0.15);
+            --caution: #f59e0b;
+            --danger: #ef4444;
+            --danger-dim: rgba(239,68,68,0.18);
+            --border: rgba(56,189,248,0.14);
+            --border-card: rgba(148,163,184,0.10);
+            --border-subtle: rgba(255,255,255,0.05);
+            --radius: 6px;
+            --radius-sm: 4px;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background: var(--bg-base);
+            color: var(--text-primary);
+            font-family: 'Inter', -apple-system, sans-serif;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+        }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        .chakra { font-family: 'Chakra Petch', sans-serif; }
+
+        /* HEADER */
+        .app-header {
+            height: 56px;
+            background: linear-gradient(180deg, #0c1428 0%, #080d19 100%);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 1.25rem;
+            flex-shrink: 0;
+            z-index: 30;
+        }
+        .header-brand { display: flex; align-items: center; gap: 0.9rem; }
+        .brand-icon {
+            width: 36px; height: 36px;
+            background: var(--amber-dim);
+            border: 1.5px solid var(--amber);
+            border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.2rem;
+            box-shadow: 0 0 12px rgba(245,158,11,0.25);
+            flex-shrink: 0;
+        }
+        .brand-text { display: flex; flex-direction: column; gap: 1px; }
+        .brand-eyebrow { font-family: 'JetBrains Mono', monospace; font-size: 0.6rem; color: var(--amber); letter-spacing: 1.5px; text-transform: uppercase; }
+        .brand-title { font-family: 'Chakra Petch', sans-serif; font-size: 1.05rem; font-weight: 700; color: #fff; letter-spacing: 0.3px; line-height: 1; }
+        .header-center { display: flex; align-items: center; gap: 0.85rem; }
+        .status-pill {
+            display: flex; align-items: center; gap: 0.45rem;
+            padding: 0.3rem 0.85rem; border-radius: 20px;
+            font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.5px;
+            border: 1px solid var(--safe); background: var(--safe-dim); color: var(--safe);
+            transition: all 0.3s;
+        }
+        .status-pill.alert {
+            border-color: var(--danger); background: var(--danger-dim); color: #ff7070;
+            box-shadow: 0 0 18px rgba(239,68,68,0.4);
+            animation: alertPulse 1.2s infinite alternate;
+        }
+        @keyframes alertPulse {
+            0% { box-shadow: 0 0 10px rgba(239,68,68,0.3); }
+            100% { box-shadow: 0 0 22px rgba(239,68,68,0.65); }
+        }
+        .status-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+        .header-meta { display: flex; align-items: center; gap: 0.7rem; font-size: 0.75rem; color: var(--text-secondary); }
+        .sim-clock { font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; color: var(--text-primary); }
+        .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); }
+        .conn-dot.on { background: var(--safe); box-shadow: 0 0 8px var(--safe); }
+        .floor-tabs { display: flex; gap: 0.4rem; }
+        .floor-btn {
+            background: var(--bg-panel); border: 1px solid var(--border-card); color: var(--text-secondary);
+            padding: 0.3rem 0.8rem; border-radius: var(--radius-sm); cursor: pointer;
+            font-family: 'Chakra Petch', sans-serif; font-size: 0.72rem; font-weight: 600;
+            transition: all 0.2s; display: flex; align-items: center; gap: 0.35rem;
+        }
+        .floor-btn:hover { color: #fff; border-color: var(--blue); background: var(--blue-dim); }
+        .floor-btn.active { background: var(--blue-dim); border-color: var(--blue); color: #7dd3fc; }
+
+        /* MAIN LAYOUT */
+        .app-body { display: flex; flex: 1; overflow: hidden; }
+
+        /* CANVAS */
+        .canvas-area { flex: 1; display: flex; flex-direction: column; position: relative; overflow: hidden; background: var(--bg-base); }
+        .canvas-hud {
+            position: absolute; top: 10px; left: 12px; z-index: 15;
+            display: flex; gap: 0.45rem; align-items: center; flex-wrap: wrap;
+        }
+        .hud-chip {
+            background: rgba(8,13,25,0.92); border: 1px solid var(--border);
+            backdrop-filter: blur(10px); padding: 0.28rem 0.65rem; border-radius: var(--radius-sm);
+            font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; color: var(--text-primary);
+            display: flex; align-items: center; gap: 0.38rem;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+        }
+        .hud-btn {
+            background: rgba(8,13,25,0.85); border: 1px solid var(--border-card); color: var(--text-secondary);
+            padding: 0.28rem 0.65rem; border-radius: var(--radius-sm); font-size: 0.7rem; cursor: pointer;
+            transition: all 0.2s; backdrop-filter: blur(8px);
+        }
+        .hud-btn:hover { color: #fff; border-color: var(--blue); }
+        .legend-drawer {
+            position: absolute; top: 46px; left: 12px; z-index: 14;
+            background: rgba(8,13,25,0.96); border: 1px solid var(--border);
+            backdrop-filter: blur(14px); border-radius: var(--radius); padding: 0.65rem 0.9rem;
+            display: flex; flex-direction: column; gap: 0.4rem; font-size: 0.7rem;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.6); max-width: 620px;
+        }
+        .legend-drawer.hidden { display: none !important; }
+        .legend-row { display: flex; flex-wrap: wrap; gap: 0.65rem; align-items: center; }
+        .legend-title { color: var(--cyan); font-weight: 700; font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; }
+        .canvas-wrap { flex: 1; position: relative; overflow: hidden; }
+        canvas#building-canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+
+        /* METRICS BAR */
+        .metrics-bar {
+            height: 68px; background: rgba(8,13,25,0.97); border-top: 1px solid var(--border);
+            display: flex; align-items: center; padding: 0 1.5rem; gap: 0; flex-shrink: 0;
+        }
+        .metric-block {
+            display: flex; flex-direction: column; gap: 3px;
+            padding: 0 1.5rem; border-right: 1px solid var(--border-subtle);
+        }
+        .metric-block:first-child { padding-left: 0; }
+        .metric-block:last-child { border-right: none; margin-left: auto; }
+        .metric-lbl { font-family: 'JetBrains Mono', monospace; font-size: 0.6rem; color: var(--text-muted); letter-spacing: 1px; text-transform: uppercase; }
+        .metric-val-row { display: flex; align-items: baseline; gap: 0.3rem; }
+        .metric-big { font-family: 'JetBrains Mono', monospace; font-size: 1.55rem; font-weight: 700; line-height: 1; }
+        .metric-sub { font-size: 0.75rem; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+        .clr-safe { color: var(--safe); }
+        .clr-danger { color: var(--danger); }
+        .clr-amber { color: var(--amber); }
+        .clr-blue { color: var(--blue); }
+        .mini-bar-track { width: 120px; height: 4px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; }
+        .mini-bar-fill { height: 100%; width: 0%; background: var(--safe); transition: width 0.4s ease, background 0.4s; }
+        .threat-badges { display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center; }
+        .t-badge { padding: 0.15rem 0.55rem; border-radius: 12px; font-size: 0.67rem; font-family: 'JetBrains Mono', monospace; font-weight: 700; border: 1px solid; }
+
+        /* SIDEBAR */
+        .sidebar {
+            width: 370px; height: 100%; background: var(--bg-panel);
+            border-left: 1px solid var(--border); display: flex;
+            flex-direction: column; overflow: hidden; flex-shrink: 0;
+        }
+        .sidebar-scroll {
+            flex: 1; overflow-y: auto; padding: 0.75rem;
+            display: flex; flex-direction: column; gap: 0.6rem;
+            scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+        }
+
+        /* ACCORDION */
+        .accordion { background: var(--bg-card); border: 1px solid var(--border-card); border-radius: var(--radius); overflow: hidden; }
+        .accordion-header {
+            display: flex; align-items: center; gap: 0.55rem;
+            padding: 0.7rem 0.85rem; cursor: pointer; user-select: none;
+            transition: background 0.2s; border-bottom: 1px solid transparent;
+        }
+        .accordion-header:hover { background: var(--bg-card-hover); }
+        .accordion.open .accordion-header { border-bottom-color: var(--border-subtle); }
+        .accordion-icon { font-size: 0.95rem; }
+        .accordion-title { font-family: 'Chakra Petch', sans-serif; font-size: 0.78rem; font-weight: 700; color: var(--cyan); letter-spacing: 0.8px; text-transform: uppercase; flex: 1; }
+        .accordion-chevron { font-size: 0.65rem; color: var(--text-muted); transition: transform 0.25s; }
+        .accordion.open .accordion-chevron { transform: rotate(180deg); }
+        .accordion-body {
+            padding: 0.75rem 0.85rem;
+            display: none;
+            flex-direction: column;
+            gap: 0.65rem;
+            max-height: 420px;
+            overflow-y: auto;
+            overflow-x: hidden;
+            /* thin styled scrollbar */
+            scrollbar-width: thin;
+            scrollbar-color: rgba(56,189,248,0.25) transparent;
+        }
+        .accordion-body::-webkit-scrollbar { width: 4px; }
+        .accordion-body::-webkit-scrollbar-track { background: transparent; }
+        .accordion-body::-webkit-scrollbar-thumb {
+            background: rgba(56,189,248,0.25);
+            border-radius: 2px;
+        }
+        .accordion-body::-webkit-scrollbar-thumb:hover {
+            background: rgba(56,189,248,0.5);
+        }
+        .accordion.open .accordion-body { display: flex; }
+
+        /* AI ENGINE */
+        .policy-toggle { display: flex; gap: 0.4rem; }
+        .btn-policy {
+            flex: 1; padding: 0.5rem; font-family: 'Chakra Petch', sans-serif; font-size: 0.72rem; font-weight: 700;
+            border-radius: var(--radius-sm); border: 1px solid var(--border-card); background: var(--bg-input);
+            color: var(--text-secondary); cursor: pointer; transition: all 0.2s; text-align: center;
+        }
+        .btn-policy:hover { color: #fff; border-color: var(--blue); }
+        .btn-policy.active { background: var(--blue-dim); border-color: var(--blue); color: #fff; box-shadow: 0 0 12px rgba(56,189,248,0.25); }
+        .train-controls { display: flex; gap: 0.4rem; align-items: flex-end; }
+        .train-ep-select { flex: 1; display: flex; flex-direction: column; gap: 0.2rem; }
+        .ctrl-label { font-family: 'JetBrains Mono', monospace; font-size: 0.6rem; color: var(--text-muted); letter-spacing: 0.8px; text-transform: uppercase; }
+        .s-select { width: 100%; background: var(--bg-input); border: 1px solid var(--border-card); color: var(--text-primary); padding: 0.42rem 0.55rem; border-radius: var(--radius-sm); font-size: 0.75rem; font-family: inherit; }
+        .s-select:focus { outline: none; border-color: var(--cyan); }
+        .btn-train {
+            background: linear-gradient(135deg, #0284c7, #0369a1); border: 1.5px solid var(--blue);
+            color: #fff; font-family: 'Chakra Petch', sans-serif; font-size: 0.75rem; font-weight: 700;
+            padding: 0.42rem 0.9rem; border-radius: var(--radius-sm); cursor: pointer;
+            box-shadow: 0 0 10px rgba(56,189,248,0.2); transition: all 0.2s; white-space: nowrap;
+        }
+        .btn-train:hover { box-shadow: 0 0 18px rgba(56,189,248,0.45); }
+        .btn-stop {
+            background: var(--danger-dim); border: 1.5px solid var(--danger); color: #fca5a5;
+            font-family: 'Chakra Petch', sans-serif; font-size: 0.75rem; font-weight: 700;
+            padding: 0.42rem 0.75rem; border-radius: var(--radius-sm); cursor: pointer; transition: all 0.2s; white-space: nowrap;
+        }
+        .btn-stop:hover { background: rgba(239,68,68,0.35); }
+
+        /* Telemetry */
+        .telemetry-card { background: rgba(5,8,15,0.7); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0.65rem; }
+        .tele-status-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.55rem; }
+        .tele-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--safe); flex-shrink: 0; }
+        .tele-dot.pulsing { background: var(--amber); animation: dotPulse 0.8s infinite alternate; }
+        @keyframes dotPulse {
+            0% { opacity: 0.5; transform: scale(0.85); }
+            100% { opacity: 1.0; transform: scale(1.15); }
+        }
+        .tele-status-text { font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; color: var(--text-secondary); flex: 1; }
+        .tele-ep-count { font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; color: var(--text-muted); }
+        .progress-track { height: 6px; background: rgba(255,255,255,0.07); border-radius: 3px; overflow: hidden; margin-bottom: 0.6rem; }
+        .progress-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--blue), var(--safe)); transition: width 0.4s ease; border-radius: 3px; }
+        .train-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 0.45rem; }
+        .tm-cell { background: rgba(13,22,40,0.7); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0.5rem 0.6rem; text-align: center; }
+        .tm-label { font-family: 'JetBrains Mono', monospace; font-size: 0.58rem; color: var(--text-muted); letter-spacing: 0.8px; text-transform: uppercase; margin-bottom: 0.25rem; }
+        .tm-value { font-family: 'JetBrains Mono', monospace; font-size: 1.05rem; font-weight: 700; }
+        .best-banner {
+            display: flex; align-items: center; justify-content: space-between;
+            background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.25);
+            border-radius: var(--radius-sm); padding: 0.4rem 0.7rem;
+            font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; margin-top: 0.5rem;
+        }
+        .best-label { color: var(--text-muted); }
+        .best-val { color: var(--safe); font-weight: 700; font-size: 0.9rem; }
+        .train-msg { font-size: 0.67rem; color: var(--text-muted); font-style: italic; text-align: center; padding: 0.25rem 0; min-height: 1.2rem; }
+        .btn-benchmark {
+            width: 100%; font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; font-weight: 700;
+            padding: 0.4rem; background: var(--amber-dim); border: 1px dashed var(--amber);
+            color: var(--amber); border-radius: var(--radius-sm); cursor: pointer; transition: all 0.2s;
+        }
+        .btn-benchmark:hover { background: rgba(245,158,11,0.25); box-shadow: 0 0 12px rgba(245,158,11,0.3); }
+        .benchmark-box { background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.55rem; font-size: 0.68rem; }
+        .bench-table { width: 100%; border-collapse: collapse; }
+        .bench-table th { font-family: 'JetBrains Mono', monospace; font-size: 0.6rem; color: var(--text-muted); text-align: left; padding: 0.2rem 0.35rem; border-bottom: 1px solid var(--border-subtle); }
+        .bench-table td { padding: 0.25rem 0.35rem; border-bottom: 1px solid rgba(255,255,255,0.04); }
+        .bench-delta { margin-top: 0.4rem; font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; color: var(--safe); font-weight: 700; text-align: center; }
+
+        /* INCIDENT */
+        .incident-grid { display: grid; gap: 0.4rem; }
+        .btn-incident {
+            padding: 0.55rem 0.75rem; border-radius: var(--radius-sm);
+            border: 1px solid rgba(255,255,255,0.12); cursor: pointer;
+            text-align: left; display: flex; align-items: center; gap: 0.6rem;
+            color: #fff; transition: all 0.2s;
+        }
+        .btn-incident:hover { transform: translateY(-1px); }
+        .btn-incident-text { display: flex; flex-direction: column; gap: 0.1rem; }
+        .btn-incident-title { font-size: 0.8rem; font-weight: 600; }
+        .btn-incident-desc { font-size: 0.65rem; opacity: 0.8; }
+        .inc-cata { background: linear-gradient(135deg,#7f1d1d,#b91c1c); border-color: #ef4444; }
+        .inc-cata:hover { box-shadow: 0 0 16px rgba(239,68,68,0.5); }
+        .inc-gas  { background: linear-gradient(135deg,#365314,#4d7c0f); border-color: #84cc16; }
+        .inc-gas:hover  { box-shadow: 0 0 16px rgba(132,204,22,0.5); }
+        .inc-bleve{ background: linear-gradient(135deg,#7c2d12,#c2410c); border-color: #f97316; }
+        .inc-bleve:hover{ box-shadow: 0 0 16px rgba(249,115,22,0.5); }
+        .inc-acid { background: linear-gradient(135deg,#713f12,#a16207); border-color: #eab308; }
+        .inc-acid:hover { box-shadow: 0 0 16px rgba(234,179,8,0.5); }
+        .inc-col  { background: linear-gradient(135deg,#431407,#7c2d12); border-color: #ea580c; }
+        .inc-col:hover  { box-shadow: 0 0 16px rgba(234,88,12,0.5); }
+
+        /* Wind */
+        .wind-row { display: flex; align-items: center; gap: 0.85rem; background: rgba(0,0,0,0.2); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0.55rem 0.7rem; }
+        .compass { width: 46px; height: 46px; border-radius: 50%; border: 1.5px solid var(--cyan); background: var(--cyan-dim); position: relative; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+        .compass-n { position: absolute; top: 2px; font-size: 0.52rem; font-weight: 700; color: var(--cyan); }
+        .compass-arrow { font-size: 1.1rem; color: var(--amber); transform: rotate(45deg); transition: transform 0.35s ease; }
+        .wind-info { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.72rem; }
+        .wind-info strong { color: var(--text-primary); }
+        .wind-info small { color: var(--text-muted); font-size: 0.62rem; }
+        .wind-dir-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 0.25rem; }
+        .btn-wind { background: rgba(255,255,255,0.05); border: 1px solid var(--border-card); color: var(--text-secondary); font-size: 0.65rem; padding: 0.28rem 0.1rem; border-radius: 3px; cursor: pointer; text-align: center; transition: all 0.2s; }
+        .btn-wind:hover, .btn-wind.active { background: var(--cyan-dim); border-color: var(--cyan); color: #fff; }
+
+        /* Sensors */
+        .sensor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; }
+        .sensor-cell { background: rgba(0,0,0,0.2); border: 1px solid var(--border-subtle); padding: 0.4rem 0.6rem; border-radius: var(--radius-sm); }
+        .sensor-lbl { font-size: 0.6rem; font-family: 'JetBrains Mono', monospace; color: var(--text-muted); }
+        .sensor-val { font-size: 0.9rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; color: var(--text-primary); }
+
+        /* Injector */
+        .form-grp { display: flex; flex-direction: column; gap: 0.22rem; }
+        .form-grp label { font-size: 0.7rem; color: var(--text-secondary); display: flex; justify-content: space-between; }
+        .s-range { -webkit-appearance: none; width: 100%; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; }
+        .s-range::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; background: var(--cyan); border-radius: 50%; cursor: pointer; box-shadow: 0 0 8px rgba(6,182,212,0.5); }
+        .inject-row { display: flex; gap: 0.4rem; }
+        .btn-inject { flex: 2; background: var(--danger); color: #fff; border: none; padding: 0.52rem; border-radius: var(--radius-sm); font-family: 'Chakra Petch', sans-serif; font-size: 0.8rem; font-weight: 700; cursor: pointer; transition: all 0.2s; box-shadow: 0 0 10px rgba(220,38,38,0.35); }
+        .btn-inject:hover { box-shadow: 0 0 18px rgba(239,68,68,0.6); }
+        .btn-clear { flex: 1; background: rgba(255,255,255,0.06); border: 1px solid var(--border-card); color: var(--text-primary); padding: 0.52rem; border-radius: var(--radius-sm); font-family: 'Chakra Petch', sans-serif; font-size: 0.73rem; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+        .btn-clear:hover { background: rgba(255,255,255,0.12); border-color: #cbd5e1; }
+
+        /* Facility Status */
+        .threats-list { max-height: 110px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.35rem; }
+        .threat-card { display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.25); border-left: 3px solid var(--danger); padding: 0.35rem 0.55rem; border-radius: var(--radius-sm); font-size: 0.7rem; }
+        .btn-ext { background: none; border: 1px solid rgba(239,68,68,0.4); color: var(--danger); font-size: 0.62rem; padding: 0.12rem 0.4rem; border-radius: 3px; cursor: pointer; }
+        .btn-ext:hover { background: var(--danger); color: #fff; }
+        .equip-scroll { max-height: 120px; overflow-y: auto; }
+        .eq-table { width: 100%; border-collapse: collapse; font-size: 0.68rem; font-family: 'JetBrains Mono', monospace; }
+        .eq-table th { text-align: left; padding: 0.22rem 0.35rem; color: var(--text-muted); border-bottom: 1px solid var(--border-card); font-size: 0.6rem; }
+        .eq-table td { padding: 0.28rem 0.35rem; border-bottom: 1px solid rgba(255,255,255,0.04); }
+        .pill { padding: 0.08rem 0.35rem; border-radius: 3px; font-size: 0.6rem; font-weight: 700; }
+        .pill-ok  { background: var(--safe-dim); color: var(--safe); }
+        .pill-haz { background: var(--danger-dim); color: var(--danger); }
+        .pill-sev { background: rgba(153,27,27,0.3); color: #fca5a5; }
+        .sim-row { display: flex; gap: 0.35rem; }
+        .btn-sim { flex: 1; background: rgba(255,255,255,0.05); border: 1px solid var(--border-card); color: var(--text-primary); padding: 0.45rem; border-radius: var(--radius-sm); font-family: 'Chakra Petch', sans-serif; font-size: 0.7rem; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+        .btn-sim:hover { background: rgba(255,255,255,0.12); border-color: var(--cyan); }
+
+        /* Footer */
+        .sidebar-footer { padding: 0.6rem 0.85rem; border-top: 1px solid var(--border-subtle); flex-shrink: 0; }
+        .footer-meta { display: flex; align-items: center; justify-content: space-between; font-size: 0.58rem; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; }
+        .footer-ai-badge { display: flex; align-items: center; gap: 0.35rem; font-size: 0.62rem; color: var(--cyan); font-weight: 600; }
+        .helper-tip { font-size: 0.67rem; color: var(--text-muted); font-style: italic; }
+        .section-divider { height: 1px; background: var(--border-subtle); margin: 0.1rem 0; }
+    </style>
 </head>
 <body>
-    <header class="header">
-        <div class="logo">
-            <h1>LBP Evacuation System</h1>
-            <div class="status-indicator" id="connection-status"></div>
+    <header class="app-header">
+        <div class="header-brand">
+            <div class="brand-icon">&#9888;&#65039;</div>
+            <div class="brand-text">
+                <div class="brand-eyebrow">Industrial Emergency Response // AI Evacuation System</div>
+                <h1 class="brand-title">ST-TBA-GAT EMERGENCY EVACUATION COMMAND</h1>
+            </div>
         </div>
-        <div class="floor-tabs" id="floor-tabs">
-            <!-- Populated dynamically -->
+        <div class="header-center">
+            <div class="status-pill" id="defcon-badge">
+                <span class="status-dot"></span>
+                <span id="defcon-text">NOMINAL &mdash; PROCESS STANDBY</span>
+            </div>
+            <div class="header-meta">
+                <span>SIM TIME:</span>
+                <span class="sim-clock" id="metric-time">00:00</span>
+                <div class="conn-dot" id="connection-status" title="SCADA Telemetry Bus"></div>
+            </div>
         </div>
+        <div class="floor-tabs" id="floor-tabs"></div>
     </header>
 
-    <main class="main-container">
-        <section class="canvas-section">
-            <div class="canvas-container">
-                <canvas id="building-canvas" width="800" height="600"></canvas>
+    <div class="app-body">
+        <section class="canvas-area">
+            <div class="canvas-hud">
+                <div class="hud-chip"><span>&#128168;</span><strong id="hud-wind-val">NE (45&deg;) @ 4.2 m/s</strong></div>
+                <div class="hud-chip"><span>&#9763;&#65039;</span><strong id="hud-gas-val">H&#8322;S 0.0 ppm</strong></div>
+                <div class="hud-chip"><span style="color:var(--blue);">&#129504;</span><strong id="hud-policy-val">AI: ST-TBA-GAT</strong></div>
+                <div class="hud-chip"><span style="color:var(--safe);">&#9679;</span><span>SIL-3 ARMED</span></div>
+                <button class="hud-btn" onclick="toggleLegend()">&#128203; Legend &#9660;</button>
+                <button class="hud-btn" onclick="if (renderer) renderer.autoFit(true);">&#127919; Fit View</button>
             </div>
-            
+
+            <div class="legend-drawer hidden" id="legend-drawer">
+                <div class="legend-row">
+                    <span class="legend-title">PROCESS UNITS:</span>
+                    <span>&#9881;&#65039; Reactor R-101/102</span>
+                    <span>&#128738;&#65039; Storage Tank TK-01/02</span>
+                    <span>&#128508; Distillation Tower</span>
+                    <span>&#128421;&#65039; SCADA Control Room</span>
+                    <span style="color:var(--safe);">&#127939; Muster Points A &amp; B</span>
+                </div>
+                <div class="legend-row">
+                    <span class="legend-title">HAZARDS:</span>
+                    <span style="color:#a3e635;">&#9679; Toxic Gas Plume</span>
+                    <span style="color:var(--danger);">&#9679; Flash Fire</span>
+                    <span style="color:#facc15;">&#9679; Corrosive Spill</span>
+                    <span style="color:#dc2626;">&#9679; BLEVE Blast</span>
+                    <span style="color:#991b1b;">&#8212; &#8212; Severed Corridor</span>
+                </div>
+                <div class="legend-row">
+                    <span class="legend-title">PERSONNEL:</span>
+                    <span style="color:#facc15;">&#9679; Worker (+ Direction Vector)</span>
+                    <span style="color:#3b82f6;">&#9679; Mustered Safe</span>
+                    <span style="color:var(--danger);">&#9679; Casualty</span>
+                    <span style="color:#00ff88; font-weight:bold;">&#9666; AI Egress Sign</span>
+                </div>
+            </div>
+
+            <div class="canvas-wrap">
+                <canvas id="building-canvas" width="1000" height="650"></canvas>
+            </div>
+
             <div class="metrics-bar">
-                <div class="metric">
-                    <span class="label">Evacuated</span>
-                    <span class="value" id="metric-evacuated">0</span><span class="total">/0</span>
+                <div class="metric-block">
+                    <span class="metric-lbl">Mustered Personnel</span>
+                    <div class="metric-val-row">
+                        <span class="metric-big clr-safe" id="metric-evacuated">0</span>
+                        <span class="metric-sub" id="metric-total">/ 0 workers</span>
+                    </div>
                 </div>
-                <div class="metric">
-                    <span class="label">Casualties</span>
-                    <span class="value casualty" id="metric-casualties">0</span>
+                <div class="metric-block">
+                    <span class="metric-lbl">Toxic Casualties</span>
+                    <div class="metric-val-row">
+                        <span class="metric-big clr-danger mono" id="metric-casualties">0</span>
+                    </div>
                 </div>
-                <div class="metric">
-                    <span class="label">Congestion</span>
-                    <div class="progress-bar"><div class="progress" id="metric-congestion"></div></div>
+                <div class="metric-block">
+                    <span class="metric-lbl">Corridor Congestion</span>
+                    <div class="mini-bar-track"><div class="mini-bar-fill" id="metric-congestion"></div></div>
                 </div>
-                <div class="metric">
-                    <span class="label">Time</span>
-                    <span class="value" id="metric-time">00:00</span>
+                <div class="metric-block">
+                    <span class="metric-lbl">Active Threats</span>
+                    <span class="metric-big clr-amber mono" id="metric-hazard-count" style="font-size:1.1rem;">0</span>
                 </div>
-                <div class="active-threats" id="active-threats">
-                    <!-- Threat badges go here -->
+                <div class="metric-block">
+                    <div class="threat-badges" id="active-threats"></div>
                 </div>
             </div>
         </section>
 
         <aside class="sidebar">
-            <div class="panel">
-                <h2>DISASTER INJECTION</h2>
-                <div class="control-group">
-                    <label>Threat Type</label>
-                    <select id="threat-type">
-                        <option value="FIRE">🔥 Fire</option>
-                        <option value="COLLAPSE">🏗️ Collapse</option>
-                        <option value="GAS">💨 Gas Leak</option>
-                        <option value="WATER">💧 Flood</option>
-                        <option value="ANIMAL">🦁 Animal</option>
-                        <option value="WEAPON">⚔️ Weapon</option>
-                    </select>
+            <div class="sidebar-scroll">
+
+                <!-- SECTION 1: AI ENGINE -->
+                <div class="accordion open" id="acc-ai">
+                    <div class="accordion-header" onclick="toggleAccordion('acc-ai')">
+                        <span class="accordion-icon">&#129504;</span>
+                        <span class="accordion-title">AI Engine &mdash; ST-TBA-GAT</span>
+                        <span class="accordion-chevron">&#9660;</span>
+                    </div>
+                    <div class="accordion-body">
+                        <div>
+                            <div class="ctrl-label" style="margin-bottom:0.35rem;">ROUTING POLICY</div>
+                            <div class="policy-toggle">
+                                <button id="btn-mode-ai" class="btn-policy active" onclick="setPolicyRoutingMode('ai')">&#129504; AI Model (GAT-GRU)</button>
+                                <button id="btn-mode-base" class="btn-policy" onclick="setPolicyRoutingMode('baseline')">&#128208; Static Baseline</button>
+                            </div>
+                        </div>
+                        <div class="train-controls">
+                            <div class="train-ep-select">
+                                <div class="ctrl-label">TRAINING EPISODES</div>
+                                <select id="train-episodes" class="s-select">
+                                    <option value="5">5 Episodes &mdash; Quick Demo</option>
+                                    <option value="10" selected>10 Episodes &mdash; Standard</option>
+                                    <option value="25">25 Episodes &mdash; Deep PPO</option>
+                                    <option value="50">50 Episodes &mdash; Mastery</option>
+                                </select>
+                            </div>
+                            <button id="btn-start-train" class="btn-train" onclick="startAITraining()">&#9889; TRAIN</button>
+                            <button id="btn-stop-train" class="btn-stop" style="display:none;" onclick="stopAITraining()">&#9209; STOP</button>
+                        </div>
+
+                        <div class="telemetry-card">
+                            <div class="tele-status-row">
+                                <div class="tele-dot" id="train-dot"></div>
+                                <span class="tele-status-text" id="train-status-text">MODEL READY &mdash; WEIGHTS SYNCED</span>
+                                <span class="tele-ep-count" id="train-ep-counter">Ep &mdash;/&mdash;</span>
+                            </div>
+                            <div class="progress-track">
+                                <div class="progress-fill" id="train-progress-fill"></div>
+                            </div>
+                            <div class="train-metrics">
+                                <div class="tm-cell">
+                                    <div class="tm-label">Survival Rate</div>
+                                    <div class="tm-value clr-safe" id="train-val-survival">&mdash;</div>
+                                </div>
+                                <div class="tm-cell">
+                                    <div class="tm-label">Episode Reward</div>
+                                    <div class="tm-value clr-blue" id="train-val-reward">&mdash;</div>
+                                </div>
+                                <div class="tm-cell">
+                                    <div class="tm-label">Actor Loss</div>
+                                    <div class="tm-value clr-amber" id="train-val-loss">&mdash;</div>
+                                </div>
+                                <div class="tm-cell">
+                                    <div class="tm-label">Critic Loss</div>
+                                    <div class="tm-value" style="color:var(--cyan);" id="train-val-critic">&mdash;</div>
+                                </div>
+                            </div>
+                            <div class="best-banner">
+                                <span class="best-label">&#127942; Best Survival Rate</span>
+                                <span class="best-val" id="train-val-best">&mdash;</span>
+                            </div>
+                            <div class="train-msg" id="train-msg-text">Idle &mdash; start training to see live metrics</div>
+                        </div>
+
+                        <div>
+                            <button class="btn-benchmark" id="btn-run-benchmark" onclick="runBenchmarkEvaluation()">&#128202; RUN AI vs BASELINE BENCHMARK</button>
+                            <div id="benchmark-results-box" class="benchmark-box" style="display:none; margin-top:0.45rem;"></div>
+                        </div>
+                    </div>
                 </div>
-                <div class="control-group">
-                    <label>Intensity <span id="intensity-val">0.8</span></label>
-                    <input type="range" id="threat-intensity" min="0.1" max="1.0" step="0.1" value="0.8">
+
+                <!-- SECTION 2: INCIDENT CONTROL -->
+                <div class="accordion open" id="acc-incident">
+                    <div class="accordion-header" onclick="toggleAccordion('acc-incident')">
+                        <span class="accordion-icon">&#128680;</span>
+                        <span class="accordion-title">Incident Control</span>
+                        <span class="accordion-chevron">&#9660;</span>
+                    </div>
+                    <div class="accordion-body">
+                        <div>
+                            <div class="ctrl-label" style="margin-bottom:0.4rem;">MULTI-HAZARD SCENARIO PRESETS</div>
+                            <div class="incident-grid">
+                                <button class="btn-incident inc-cata" onclick="triggerScenario('major_catastrophe')">
+                                    <span style="font-size:1.3rem;">&#128165;</span>
+                                    <div class="btn-incident-text">
+                                        <span class="btn-incident-title">Major Petrochemical Catastrophe</span>
+                                        <span class="btn-incident-desc">Reactor BLEVE + Tank Fire + Toxic Gas Plume</span>
+                                    </div>
+                                </button>
+                                <button class="btn-incident inc-gas" onclick="triggerScenario('toxic_plume')">
+                                    <span style="font-size:1.3rem;">&#128168;</span>
+                                    <div class="btn-incident-text">
+                                        <span class="btn-incident-title">Toxic Gas Release</span>
+                                        <span class="btn-incident-desc">Chlorine plume drifting NE across catwalks</span>
+                                    </div>
+                                </button>
+                                <button class="btn-incident inc-bleve" onclick="triggerScenario('tank_bleve')">
+                                    <span style="font-size:1.3rem;">&#128293;</span>
+                                    <div class="btn-incident-text">
+                                        <span class="btn-incident-title">Tank Farm BLEVE</span>
+                                        <span class="btn-incident-desc">Storage tank rupture + severed escape routes</span>
+                                    </div>
+                                </button>
+                                <button class="btn-incident inc-acid" onclick="triggerScenario('acid_spill')">
+                                    <span style="font-size:1.3rem;">&#9888;&#65039;</span>
+                                    <div class="btn-incident-text">
+                                        <span class="btn-incident-title">Corrosive Chemical Spill</span>
+                                        <span class="btn-incident-desc">Drainage basin breach + deluge washdown</span>
+                                    </div>
+                                </button>
+                                <button class="btn-incident inc-col" onclick="triggerScenario('collapse')">
+                                    <span style="font-size:1.3rem;">&#127959;&#65039;</span>
+                                    <div class="btn-incident-text">
+                                        <span class="btn-incident-title">Pipe Rack Structural Collapse</span>
+                                        <span class="btn-incident-desc">Corridors blocked by collapsed steel rack</span>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="section-divider"></div>
+                        <div>
+                            <div class="ctrl-label" style="margin-bottom:0.4rem;">ATMOSPHERIC CONDITIONS</div>
+                            <div class="wind-row">
+                                <div class="compass">
+                                    <div class="compass-n">N</div>
+                                    <div class="compass-arrow" id="compass-needle">&#10148;</div>
+                                </div>
+                                <div class="wind-info">
+                                    <strong id="sidebar-wind-text">NE (45&deg;) @ 4.2 m/s</strong>
+                                    <small>Pasquill Stability Class D</small>
+                                </div>
+                            </div>
+                            <div class="wind-dir-grid" style="margin-top:0.4rem;">
+                                <button class="btn-wind" onclick="setWindDirection(270,5.0,this)">&#11013;&#65039; W</button>
+                                <button class="btn-wind" onclick="setWindDirection(315,5.0,this)">&#8598;&#65039; NW</button>
+                                <button class="btn-wind" onclick="setWindDirection(0,5.0,this)">&#11014;&#65039; N</button>
+                                <button class="btn-wind active" onclick="setWindDirection(45,4.2,this)">&#8599;&#65039; NE</button>
+                                <button class="btn-wind" onclick="setWindDirection(90,5.0,this)">&#10145;&#65039; E</button>
+                                <button class="btn-wind" onclick="setWindDirection(180,5.0,this)">&#11015;&#65039; S</button>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="ctrl-label" style="margin-bottom:0.4rem;">FIELD GAS SENSORS</div>
+                            <div class="sensor-grid">
+                                <div class="sensor-cell"><div class="sensor-lbl">H&#8322;S TOXIC GAS</div><div class="sensor-val mono" id="val-h2s">0.0 <small style="font-size:0.6rem;">PPM</small></div></div>
+                                <div class="sensor-cell"><div class="sensor-lbl">Cl&#8322; CHLORINE</div><div class="sensor-val mono" id="val-cl2">0.0 <small style="font-size:0.6rem;">PPM</small></div></div>
+                                <div class="sensor-cell"><div class="sensor-lbl">COMBUSTIBLE LEL</div><div class="sensor-val mono" id="val-lel">0.0 <small style="font-size:0.6rem;">%</small></div></div>
+                                <div class="sensor-cell"><div class="sensor-lbl">THERMAL FLUX</div><div class="sensor-val mono" id="val-heat">0.4 <small style="font-size:0.6rem;">kW/m&#178;</small></div></div>
+                            </div>
+                        </div>
+                        <div class="section-divider"></div>
+                        <div>
+                            <div class="ctrl-label" style="margin-bottom:0.4rem;">&#129514; CUSTOM DISASTER INJECTOR</div>
+                            <div class="form-grp" style="margin-bottom:0.5rem;">
+                                <label>Disaster Type</label>
+                                <select id="threat-type" class="s-select">
+                                    <option value="GAS">&#128168; Toxic Gas Leak (H&#8322;S / Chlorine)</option>
+                                    <option value="FIRE">&#128293; Hydrocarbon Flash Fire</option>
+                                    <option value="CHEMICAL_SPILL">&#9888;&#65039; Corrosive Chemical Spill</option>
+                                    <option value="EXPLOSION">&#128165; Reactor BLEVE / Blast</option>
+                                    <option value="COLLAPSE">&#127959;&#65039; Structural Collapse</option>
+                                    <option value="WATER">&#128167; Emergency Deluge Washdown</option>
+                                </select>
+                            </div>
+                            <div class="form-grp" style="margin-bottom:0.5rem;">
+                                <label>Target Equipment</label>
+                                <select id="node-target-select" class="s-select">
+                                    <optgroup label="Ground Process Units (Floor 1)">
+                                        <option value="reactor_1" data-floor="1">&#9881;&#65039; Hydrocracker Reactor R-101</option>
+                                        <option value="reactor_2" data-floor="1">&#9881;&#65039; Hydrocracker Reactor R-102</option>
+                                        <option value="pump_house" data-floor="1">&#128508; Distillation Column &amp; Pump House</option>
+                                        <option value="compressor_shed" data-floor="1">&#9889; Compressor Shed</option>
+                                        <option value="control_room" data-floor="1">&#128421;&#65039; Central SCADA Control Room</option>
+                                        <option value="loading_bay" data-floor="1">&#128667; Chemical Loading Bay</option>
+                                    </optgroup>
+                                    <optgroup label="Hazardous Storage (Floor 1)">
+                                        <option value="tank_farm_a" data-floor="1">&#128738;&#65039; Storage Tank TK-01</option>
+                                        <option value="tank_farm_b" data-floor="1">&#128738;&#65039; Storage Tank TK-02</option>
+                                        <option value="hazmat_basin" data-floor="1">&#9763;&#65039; Hazmat Drainage Basin</option>
+                                        <option value="emergency_shower" data-floor="1">&#128703; Emergency Decon Shower</option>
+                                    </optgroup>
+                                    <optgroup label="Elevated Catwalks (Floor 2)">
+                                        <option value="catwalk_n_f2" data-floor="2">&#129695; Maintenance Catwalk North</option>
+                                        <option value="catwalk_s_f2" data-floor="2">&#129695; Maintenance Catwalk South</option>
+                                        <option value="pipe_bridge_f2" data-floor="2">&#127751; Process Pipe Bridge</option>
+                                    </optgroup>
+                                    <optgroup label="High Elevation (Floor 3)">
+                                        <option value="flare_header_f3" data-floor="3">&#128293; Relief Flare Header Platform</option>
+                                        <option value="flare_platform_f3" data-floor="3">&#128508; Flare Stack Deck</option>
+                                    </optgroup>
+                                </select>
+                            </div>
+                            <div class="form-grp" style="margin-bottom:0.5rem;">
+                                <label>Intensity <span id="intensity-val" class="mono">0.85</span></label>
+                                <input class="s-range" type="range" id="threat-intensity" min="0.1" max="1.0" step="0.05" value="0.85">
+                            </div>
+                            <div class="form-grp" style="margin-bottom:0.5rem;">
+                                <label>Spread Rate <span id="spread-val" class="mono">0.20</span></label>
+                                <input class="s-range" type="range" id="threat-spread" min="0.0" max="0.5" step="0.05" value="0.20">
+                            </div>
+                            <div class="inject-row">
+                                <button id="btn-inject" class="btn-inject">&#128165; INJECT DISASTER</button>
+                                <button id="btn-clear-all" class="btn-clear" onclick="clearAllDisasters()">&#129529; CLEAR ALL</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div class="control-group">
-                    <label>Spread Rate <span id="spread-val">0.1</span></label>
-                    <input type="range" id="threat-spread" min="0.0" max="0.5" step="0.05" value="0.1">
+
+                <!-- SECTION 3: FACILITY STATUS -->
+                <div class="accordion" id="acc-facility">
+                    <div class="accordion-header" onclick="toggleAccordion('acc-facility')">
+                        <span class="accordion-icon">&#127981;</span>
+                        <span class="accordion-title">Facility Status</span>
+                        <span class="accordion-chevron">&#9660;</span>
+                    </div>
+                    <div class="accordion-body">
+                        <div>
+                            <div class="ctrl-label" style="margin-bottom:0.35rem;">&#128225; ACTIVE THREAT MONITOR</div>
+                            <div id="active-disasters-list" class="threats-list">
+                                <span class="helper-tip">No active threats. Complex nominal.</span>
+                            </div>
+                        </div>
+                        <div class="section-divider"></div>
+                        <div>
+                            <div class="ctrl-label" style="margin-bottom:0.35rem;">EQUIPMENT INTEGRITY HUD</div>
+                            <div class="equip-scroll">
+                                <table class="eq-table">
+                                    <thead><tr><th>UNIT</th><th>ZONE</th><th>STATUS</th><th>HAZARD</th></tr></thead>
+                                    <tbody id="equipment-rows"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="section-divider"></div>
+                        <div>
+                            <div class="ctrl-label" style="margin-bottom:0.4rem;">&#9201;&#65039; SIMULATION ENGINE</div>
+                            <div class="sim-row">
+                                <button id="btn-play" class="btn-sim">&#9654; RUN</button>
+                                <button id="btn-pause" class="btn-sim">&#9646;&#9646; PAUSE</button>
+                                <button id="btn-step" class="btn-sim">&#9197; STEP</button>
+                                <button id="btn-reset" class="btn-sim">&#8635; RESET</button>
+                            </div>
+                            <div class="form-grp" style="margin-top:0.5rem;">
+                                <label>Simulation Speed</label>
+                                <select id="sim-speed" class="s-select">
+                                    <option value="0.5">0.5&#215; Real-Time</option>
+                                    <option value="1.0" selected>1.0&#215; Normal</option>
+                                    <option value="2.0">2.0&#215; Accelerated</option>
+                                    <option value="5.0">5.0&#215; Fast Evaluation</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <p class="helper-text">Click a node on the map to inject.</p>
-                <div id="selected-node-info" class="hidden">
-                    Selected: <span id="selected-node-id">None</span>
-                    <button id="btn-inject" class="btn-primary">Inject Disaster</button>
-                </div>
+
             </div>
 
-            <div class="panel">
-                <h2>SIMULATION</h2>
-                <div class="playback-controls">
-                    <button id="btn-play" class="icon-btn" title="Play">▶</button>
-                    <button id="btn-pause" class="icon-btn" title="Pause">⏸</button>
-                    <button id="btn-step" class="icon-btn" title="Step">⏭</button>
-                    <button id="btn-reset" class="icon-btn" title="Reset">↻ Reset</button>
-                </div>
-                <div class="control-group mt-3">
-                    <label>Speed</label>
-                    <select id="sim-speed">
-                        <option value="0.5">0.5x</option>
-                        <option value="1.0" selected>1.0x</option>
-                        <option value="2.0">2.0x</option>
-                        <option value="5.0">5.0x</option>
-                    </select>
+            <div class="sidebar-footer">
+                <div class="footer-meta">
+                    <span>IEC 61508 SIL-3 | ATEX Zone 1/2 | MARL v2.1</span>
+                    <div class="footer-ai-badge">
+                        <span style="color:var(--safe);">&#9679;</span>
+                        AI EVACUATION SYSTEM
+                    </div>
                 </div>
             </div>
         </aside>
-    </main>
+    </div>
 
-    <script src="/static/js/websocket.js"></script>
-    <script src="/static/js/metrics.js"></script>
-    <script src="/static/js/canvas_renderer.js"></script>
-    <script src="/static/js/floor_manager.js"></script>
-    <script src="/static/js/controls.js"></script>
+    <script src="/static/js/websocket.js?v=4.0"></script>
+    <script src="/static/js/metrics.js?v=4.0"></script>
+    <script src="/static/js/canvas_renderer.js?v=4.0"></script>
+    <script src="/static/js/floor_manager.js?v=4.0"></script>
+    <script src="/static/js/controls.js?v=4.0"></script>
     <script>
-        document.addEventListener('DOMContentLoaded', async () => {
-            // Load initial building graph
-            const res = await fetch('/api/building');
-            const buildingData = await res.json();
-            
-            if (buildingData.status === 'error') {
-                console.error("Failed to load building data:", buildingData.message);
-                // Start with empty data for now
+        let renderer = null, controlPanel = null, floorManager = null, metricsPanel = null, trainPollTimer = null;
+
+        function toggleAccordion(id) {
+            const el = document.getElementById(id);
+            if (el) el.classList.toggle('open');
+        }
+
+        function toggleLegend() {
+            const d = document.getElementById('legend-drawer');
+            if (d) d.classList.toggle('hidden');
+        }
+
+        async function setPolicyRoutingMode(mode) {
+            try {
+                document.getElementById('btn-mode-ai')?.classList.toggle('active', mode === 'ai');
+                document.getElementById('btn-mode-base')?.classList.toggle('active', mode === 'baseline');
+                await fetch('/api/policy/mode', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({mode}) });
+                const hp = document.getElementById('hud-policy-val');
+                if (hp) { hp.innerText = mode === 'ai' ? 'AI: ST-TBA-GAT' : 'STATIC BASELINE'; hp.style.color = mode === 'ai' ? 'var(--blue)' : 'var(--text-secondary)'; }
+            } catch(e) { console.error('Policy mode error:', e); }
+        }
+
+        async function startAITraining() {
+            try {
+                const epVal = parseInt(document.getElementById('train-episodes')?.value || '10');
+                document.getElementById('btn-start-train').style.display = 'none';
+                document.getElementById('btn-stop-train').style.display = 'inline-block';
+                document.getElementById('train-dot')?.classList.add('pulsing');
+                document.getElementById('train-status-text').innerText = 'TRAINING IN PROGRESS...';
+                document.getElementById('train-msg-text').innerText = 'Initializing ST-TBA-GAT policy network...';
+                setPolicyRoutingMode('ai');
+                await fetch('/api/train/start', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({episodes: epVal, facility: 'industrial'}) });
+                if (trainPollTimer) clearInterval(trainPollTimer);
+                trainPollTimer = setInterval(pollTrainingStatus, 700);
+            } catch(e) { console.error('Training start error:', e); }
+        }
+
+        async function stopAITraining() {
+            try {
+                await fetch('/api/train/stop', { method: 'POST' });
+                document.getElementById('train-status-text').innerText = 'STOPPING TRAINING...';
+            } catch(e) { console.error('Stop error:', e); }
+        }
+
+        async function pollTrainingStatus() {
+            try {
+                const res = await fetch('/api/train/status');
+                if (!res.ok) return;
+                // Backend sends FLAT keys — d.survival_rate is 0-100 %, d.progress is 0-1 float
+                const d = await res.json();
+
+                // Progress bar
+                const fill = document.getElementById('train-progress-fill');
+                const pct = Math.min(100, Math.max(0, (d.progress || 0) * 100));
+                if (fill) fill.style.width = pct + '%';
+
+                // Episode counter
+                const epEl = document.getElementById('train-ep-counter');
+                if (epEl) epEl.innerText = 'Ep ' + (d.current_episode ?? '--') + '/' + (d.total_episodes ?? '--');
+
+                // Survival rate — already a % (0-100)
+                const survEl = document.getElementById('train-val-survival');
+                if (survEl && d.survival_rate !== undefined) {
+                    survEl.innerText = d.survival_rate.toFixed(1) + '%';
+                    survEl.style.color = d.survival_rate >= 80 ? 'var(--safe)' : d.survival_rate >= 50 ? 'var(--amber)' : 'var(--danger)';
+                }
+
+                // Episode reward
+                const rewEl = document.getElementById('train-val-reward');
+                if (rewEl && d.reward !== undefined) rewEl.innerText = (d.reward >= 0 ? '+' : '') + d.reward.toFixed(0);
+
+                // Actor loss
+                const lossEl = document.getElementById('train-val-loss');
+                if (lossEl && d.actor_loss !== undefined) lossEl.innerText = d.actor_loss.toFixed(4);
+
+                // Critic loss (replaces static LATENCY)
+                const criticEl = document.getElementById('train-val-critic');
+                if (criticEl && d.critic_loss !== undefined) criticEl.innerText = d.critic_loss.toFixed(4);
+
+                // Best survival rate
+                const bestEl = document.getElementById('train-val-best');
+                if (bestEl && d.best_survival_rate !== undefined) bestEl.innerText = d.best_survival_rate.toFixed(1) + '%';
+
+                // Status message
+                const msgEl = document.getElementById('train-msg-text');
+                if (msgEl && d.message) msgEl.innerText = d.message;
+
+                // Training finished
+                if (!d.is_training) {
+                    if (trainPollTimer) { clearInterval(trainPollTimer); trainPollTimer = null; }
+                    document.getElementById('btn-start-train').style.display = 'inline-block';
+                    document.getElementById('btn-stop-train').style.display = 'none';
+                    document.getElementById('train-dot')?.classList.remove('pulsing');
+                    document.getElementById('train-status-text').innerText = d.status === 'completed' ? 'TRAINING COMPLETE — WEIGHTS SYNCED' : 'MODEL READY — WEIGHTS SYNCED';
+                    if (fill && d.status === 'completed') fill.style.width = '100%';
+                }
+            } catch(e) { console.error('Poll error:', e); }
+        }
+
+        async function runBenchmarkEvaluation() {
+            const btn = document.getElementById('btn-run-benchmark');
+            const resBox = document.getElementById('benchmark-results-box');
+            if (btn) { btn.disabled = true; btn.innerText = 'Benchmarking...'; }
+            if (resBox) { resBox.style.display = 'block'; resBox.innerHTML = '<span style="color:var(--amber);">Running Monte Carlo evaluation...</span>'; }
+            try {
+                const res = await fetch('/api/benchmark/run', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({trials:3}) });
+                const data = await res.json();
+                // Backend returns survival_rate as 0-1 fractions
+                const ai = data.ai || {}, base = data.baseline || {};
+                const aiSurv = ((ai.survival_rate || 0) * 100).toFixed(1);
+                const baseSurv = ((base.survival_rate || 0) * 100).toFixed(1);
+                const delta = ((ai.survival_rate || 0) - (base.survival_rate || 0)) * 100;
+                const sign = delta >= 0 ? '+' : '';
+                if (resBox) resBox.innerHTML = `
+                    <div style="font-weight:700;color:var(--cyan);margin-bottom:0.4rem;font-size:0.72rem;">BENCHMARK SCORECARD &mdash; ${data.trials||3} Cascades</div>
+                    <table class="bench-table">
+                        <thead><tr><th>METRIC</th><th style="color:var(--blue);">AI (GAT-GRU)</th><th style="color:var(--text-secondary);">STATIC</th></tr></thead>
+                        <tbody>
+                            <tr><td>Survival Rate</td><td style="color:var(--safe);font-weight:700;">${aiSurv}%</td><td>${baseSurv}%</td></tr>
+                            <tr><td>Evac Time</td><td>${(ai.mean_evac_time||0).toFixed(1)}s</td><td>${(base.mean_evac_time||0).toFixed(1)}s</td></tr>
+                            <tr><td>Hazards Evaded</td><td style="color:var(--blue);">${ai.hazards_evaded||0}</td><td>${base.hazards_evaded||0}</td></tr>
+                            <tr><td>Congestion</td><td>${((ai.congestion_index||0)*100).toFixed(0)}%</td><td>${((base.congestion_index||0)*100).toFixed(0)}%</td></tr>
+                        </tbody>
+                    </table>
+                    <div class="bench-delta">&#127942; AI Policy: ${sign}${delta.toFixed(1)}% Survival over Baseline</div>`;
+            } catch(e) {
+                console.error('Benchmark failed:', e);
+                if (resBox) resBox.innerHTML = '<span style="color:var(--danger);">Benchmark failed. Check console.</span>';
+            } finally {
+                if (btn) { btn.disabled = false; btn.innerText = '\uD83D\uDCCA RUN AI vs BASELINE BENCHMARK'; }
             }
+        }
 
-            const renderer = new BuildingRenderer('building-canvas');
-            renderer.init(buildingData);
+        async function triggerScenario(name) {
+            try { await fetch('/api/scenario/' + name, { method: 'POST' }); } catch(e) { console.error(e); }
+        }
 
-            const floorManager = new FloorManager(renderer);
+        async function clearAllDisasters() {
+            try { await fetch('/api/clear_disasters', { method: 'POST' }); } catch(e) { console.error(e); }
+        }
+
+        async function setWindDirection(angle, speed, btnEl) {
+            try {
+                document.querySelectorAll('.btn-wind').forEach(b => b.classList.remove('active'));
+                if (btnEl) btnEl.classList.add('active');
+                await fetch('/api/wind', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({angle, speed}) });
+                const needle = document.getElementById('compass-needle');
+                if (needle) needle.style.transform = 'rotate(' + angle + 'deg)';
+                let dir = 'NE';
+                if (angle >= 337.5 || angle < 22.5) dir = 'E';
+                else if (angle < 67.5) dir = 'NE';
+                else if (angle < 112.5) dir = 'N';
+                else if (angle < 157.5) dir = 'NW';
+                else if (angle < 202.5) dir = 'W';
+                else if (angle < 247.5) dir = 'SW';
+                else if (angle < 292.5) dir = 'S';
+                else dir = 'SE';
+                const label = dir + ' (' + angle + '\u00b0) @ ' + speed + ' m/s';
+                const sw = document.getElementById('sidebar-wind-text'); if (sw) sw.innerText = label;
+                const hw = document.getElementById('hud-wind-val'); if (hw) hw.innerText = label;
+            } catch(e) { console.error(e); }
+        }
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            let buildingData = null;
+            try { const r = await fetch('/api/building'); buildingData = await r.json(); } catch(e) { console.warn(e); }
+
+            renderer = new BuildingRenderer('building-canvas');
+            if (buildingData && buildingData.status !== 'error') renderer.init(buildingData);
+
+            floorManager = new FloorManager(renderer);
             floorManager.init();
+            metricsPanel = new MetricsPanel();
 
-            const metricsPanel = new MetricsPanel();
-            
-            const wsUrl = `ws://${window.location.host}/ws/state`;
+            try {
+                const ir = await fetch('/api/state');
+                if (ir.ok) {
+                    const is = await ir.json();
+                    if (!renderer.buildingData && is.nodes) renderer.initFromState(is);
+                    renderer.updateState(is);
+                    floorManager.updateFloorIndicators(is);
+                    metricsPanel.update(is);
+                }
+            } catch(e) { console.warn(e); }
+
+            const wsUrl = 'ws://' + window.location.host + '/ws/state';
             const wsManager = new WebSocketManager(wsUrl);
-            
             wsManager.onStateUpdate = (state) => {
+                if (!renderer.buildingData && state.nodes) renderer.initFromState(state);
                 renderer.updateState(state);
                 floorManager.updateFloorIndicators(state);
                 metricsPanel.update(state);
+                if (controlPanel?.updateState) controlPanel.updateState(state);
             };
             wsManager.connect();
 
-            const controlPanel = new ControlPanel(wsManager);
+            controlPanel = new ControlPanel(wsManager);
             controlPanel.init();
-
-            renderer.onNodeSelected = (nodeId, floor) => {
-                controlPanel.onNodeSelected(nodeId, floor);
-            };
-            
+            renderer.onNodeSelected = (nodeId, floor) => controlPanel.onNodeSelected(nodeId, floor);
             renderer.startAnimation();
         });
     </script>

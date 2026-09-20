@@ -72,15 +72,17 @@ class Critic(nn.Module):
         return value
 
 class ActorCritic(nn.Module):
-    def __init__(self, node_feature_dim: int = 8, embedding_dim: int = 64, max_actions: int = 6, num_agents: int = 20, num_heads: int = 4, num_layers: int = 2, dropout: float = 0.1, actor_hidden_dims: List[int] = [128, 64], critic_hidden_dims: List[int] = [256, 128]):
+    def __init__(self, node_feature_dim: int = 8, embedding_dim: int = 64, max_actions: int = 6, num_agents: int = 20, num_heads: int = 4, num_layers: int = 2, dropout: float = 0.1, use_recurrent: bool = True, actor_hidden_dims: List[int] = [128, 64], critic_hidden_dims: List[int] = [256, 128]):
         super(ActorCritic, self).__init__()
+        self.use_recurrent = use_recurrent
         
         self.encoder = create_encoder(
             node_feature_dim=node_feature_dim,
             embedding_dim=embedding_dim,
             num_heads=num_heads,
             num_layers=num_layers,
-            dropout=dropout
+            dropout=dropout,
+            use_recurrent=use_recurrent
         )
         
         self.actor = Actor(
@@ -95,8 +97,16 @@ class ActorCritic(nn.Module):
             hidden_dims=critic_hidden_dims
         )
         
-    def get_action(self, node_features: torch.Tensor, edge_index: torch.Tensor, agent_idx: int, action_mask: torch.Tensor, deterministic: bool = False):
-        embeddings = self.encoder(node_features, edge_index)
+    def forward_encoder(self, node_features: torch.Tensor, edge_index: torch.Tensor, hidden_state: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        if self.use_recurrent:
+            embeddings, next_h = self.encoder(node_features, edge_index, hidden_state)
+            return embeddings, next_h
+        else:
+            embeddings = self.encoder(node_features, edge_index)
+            return embeddings, None
+
+    def get_action(self, node_features: torch.Tensor, edge_index: torch.Tensor, agent_idx: int, action_mask: torch.Tensor, hidden_state: Optional[torch.Tensor] = None, deterministic: bool = False):
+        embeddings, next_h = self.forward_encoder(node_features, edge_index, hidden_state)
         
         # Get specific agent's embedding
         agent_embedding = embeddings[agent_idx].unsqueeze(0) if embeddings.dim() == 2 else embeddings[:, agent_idx]
@@ -125,10 +135,10 @@ class ActorCritic(nn.Module):
             
         value = self.critic(embeddings.unsqueeze(0) if embeddings.dim() == 2 else embeddings)
         
-        return (edge_action, door_action, vertical_action), log_prob, value
+        return (edge_action, door_action, vertical_action), log_prob, value, next_h
         
-    def evaluate_action(self, node_features: torch.Tensor, edge_index: torch.Tensor, agent_idx: int, action: Tuple[torch.Tensor, torch.Tensor, torch.Tensor], action_mask: torch.Tensor):
-        embeddings = self.encoder(node_features, edge_index)
+    def evaluate_action(self, node_features: torch.Tensor, edge_index: torch.Tensor, agent_idx: int, action: Tuple[torch.Tensor, torch.Tensor, torch.Tensor], action_mask: torch.Tensor, hidden_state: Optional[torch.Tensor] = None):
+        embeddings, next_h = self.forward_encoder(node_features, edge_index, hidden_state)
         
         agent_embedding = embeddings[agent_idx].unsqueeze(0) if embeddings.dim() == 2 else embeddings[:, agent_idx]
         mask = action_mask.unsqueeze(0) if action_mask.dim() == 1 else action_mask
@@ -146,8 +156,9 @@ class ActorCritic(nn.Module):
         
         value = self.critic(embeddings.unsqueeze(0) if embeddings.dim() == 2 else embeddings)
         
-        return log_prob, entropy, value
+        return log_prob, entropy, value, next_h
         
-    def get_value(self, node_features: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
-        embeddings = self.encoder(node_features, edge_index)
+    def get_value(self, node_features: torch.Tensor, edge_index: torch.Tensor, hidden_state: Optional[torch.Tensor] = None) -> torch.Tensor:
+        embeddings, _ = self.forward_encoder(node_features, edge_index, hidden_state)
         return self.critic(embeddings.unsqueeze(0) if embeddings.dim() == 2 else embeddings)
+
