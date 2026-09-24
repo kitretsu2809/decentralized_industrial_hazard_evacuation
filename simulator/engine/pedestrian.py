@@ -1,5 +1,5 @@
 """
-Pedestrian agent for the LBP Baseline Simulator.
+Pedestrian agent for the Industrial Evacuation Simulator.
 Each agent has a position in continuous 2D space, a velocity,
 a state, and a current Dijkstra path (list of node IDs).
 """

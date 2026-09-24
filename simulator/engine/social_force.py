@@ -1,11 +1,7 @@
 """
-Social Force Model — Helbing & Molnár (1995)
-"Social force model for pedestrian dynamics", Physical Review E 51, 4282.
-
-F_total = F_goal + F_agent_repulsion + F_hazard_flee
-
-Each pedestrian is treated as a particle in continuous 2D space.
-Integration: Euler forward with dt = 0.05–0.1 s.
+Social Force Model — Helbing & Molnár (1995), Physical Review E 51, 4282.
+Fixed: forces computed simultaneously for all agents (correct physics).
+Fixed: proper mass, capped forces, no mid-loop position updates.
 """
 from __future__ import annotations
 import math
@@ -15,155 +11,126 @@ from typing import Dict, List, Tuple, TYPE_CHECKING
 if TYPE_CHECKING:
     from .pedestrian import Pedestrian
 
-# ── SFM Parameters (Helbing 1995) ─────────────────────────────────────────────
-TAU         = 0.5     # relaxation time (s) — how fast agent reaches desired vel
-A_repulse   = 2000.0  # agent repulsion strength (N) — Helbing 1995 Table I
-B_repulse   = 0.08    # agent repulsion length scale (m)
-R_agent     = 0.25    # physical radius of pedestrian (m)
-K_FLEE      = 6.0     # hazard flee force multiplier
-V_JAM       = 5.4     # jamming density (persons/m²) — Weidmann 1992
+# ── SFM parameters ───────────────────────────────────────────────────────────
+TAU        = 0.5      # relaxation time (s)
+A_REPULSE  = 300.0   # repulsion strength — tuned down from Helbing to avoid instability
+B_REPULSE  = 0.10    # length scale (m)
+R_AGENT    = 0.30    # pedestrian radius (m)
+MASS       = 80.0    # kg (realistic human mass)
+K_FLEE     = 4.0     # hazard flee multiplier
+V_FREE     = 1.34    # mean free-flow speed (m/s) — Weidmann 1992
+V_JAM      = 5.4     # jamming density (persons/m²)
+V_MAX_ABS  = 4.0     # hard cap (sprint)
 
-# ── Weidmann velocity-density correction ──────────────────────────────────────
+
 def weidmann_speed(v_free: float, density: float) -> float:
-    """
-    v(ρ) = v_free * (1 - exp(-1.913 * (1/ρ - 1/ρ_jam)))
-    Caps free-flow speed based on local crowd density ρ (persons/m²).
-    """
-    if density <= 0.01:
+    """Velocity-density relation from Weidmann (1992)."""
+    if density < 0.01:
         return v_free
-    rho = max(0.01, min(density, V_JAM - 0.1))
+    rho = min(density, V_JAM - 0.05)
     factor = 1.0 - math.exp(-1.913 * (1.0 / rho - 1.0 / V_JAM))
     return v_free * max(0.0, factor)
 
 
 class SocialForceModel:
-    """
-    Computes the total social force on each pedestrian and integrates motion.
-    """
-
     def __init__(self, node_positions: Dict[str, Tuple[float, float]]):
-        """
-        node_positions: {node_id: (x, y)} in metres
-        """
         self.node_positions = node_positions
 
-    def step(self, agents: List["Pedestrian"], hazard_levels: Dict[str, float],
+    def step(self, agents: List, hazard_levels: Dict[str, float],
              blocked: set, dt: float) -> None:
-        """
-        Update all pedestrians' positions by dt seconds.
-        Modifies agents in-place.
-        """
-        # Build position array for vectorised repulsion
         active = [a for a in agents if a.state.value in ("moving", "rerouting", "danger")]
         if not active:
             return
 
-        positions = np.array([(a.x, a.y) for a in active], dtype=np.float64)
+        n = len(active)
+        # Snapshot positions BEFORE any updates (correct simultaneous physics)
+        px = np.array([a.x  for a in active], dtype=np.float64)
+        py = np.array([a.y  for a in active], dtype=np.float64)
+        vx = np.array([a.vx for a in active], dtype=np.float64)
+        vy = np.array([a.vy for a in active], dtype=np.float64)
+
+        fx = np.zeros(n, dtype=np.float64)
+        fy = np.zeros(n, dtype=np.float64)
 
         for i, agent in enumerate(active):
+            # ── Waypoint check ────────────────────────────────────────────────
             if not agent.path:
-                agent.vx, agent.vy = 0.0, 0.0
                 continue
-
-            # ── Goal force ───────────────────────────────────────────────────
             target_id = agent.path[0]
             if target_id not in self.node_positions:
                 agent.path = agent.path[1:]
                 continue
 
-            tx, ty   = self.node_positions[target_id]
-            dx, dy   = tx - agent.x, ty - agent.y
-            dist_to  = math.hypot(dx, dy)
+            tx_, ty_ = self.node_positions[target_id]
 
-            # Arrive at waypoint: advance to next node
-            if dist_to < 2.5:   # within 2.5 m = "at node"
+            # Arrive at waypoint
+            if math.hypot(tx_ - px[i], ty_ - py[i]) < 2.5:
                 agent.current_node = target_id
                 agent.path = agent.path[1:]
                 if not agent.path:
-                    agent.vx, agent.vy = 0.0, 0.0
                     continue
-                target_id   = agent.path[0]
-                tx, ty      = self.node_positions.get(target_id, (agent.x, agent.y))
-                dx, dy      = tx - agent.x, ty - agent.y
-                dist_to     = math.hypot(dx, dy)
+                target_id = agent.path[0]
+                tx_, ty_ = self.node_positions.get(target_id, (px[i], py[i]))
 
-            if dist_to < 0.01:
-                dist_to = 0.01
+            dx_, dy_ = tx_ - px[i], ty_ - py[i]
+            dist = math.hypot(dx_, dy_)
+            if dist < 0.01:
+                continue
 
-            # Local density estimate (count neighbours within 3m)
-            near = np.linalg.norm(positions - positions[i], axis=1)
-            local_density = float(np.sum(near < 3.0) - 1) / (math.pi * 3.0 ** 2)
-            v_desired = weidmann_speed(agent.desired_speed, local_density)
+            # ── Local density for Weidmann correction ─────────────────────────
+            diff_sq = (px - px[i])**2 + (py - py[i])**2
+            local_count = float(np.sum(diff_sq < 9.0) - 1)   # within 3 m radius
+            local_density = local_count / (math.pi * 9.0)
+            v_des = weidmann_speed(agent.desired_speed, local_density)
 
-            # Desired velocity vector
-            e_x, e_y = dx / dist_to, dy / dist_to
-            vd_x, vd_y = e_x * v_desired, e_y * v_desired
-
-            # Goal force: drive current velocity toward desired
-            f_goal_x = (vd_x - agent.vx) / TAU
-            f_goal_y = (vd_y - agent.vy) / TAU
+            # ── Goal force ───────────────────────────────────────────────────
+            e_x, e_y = dx_ / dist, dy_ / dist
+            g_x = MASS * (e_x * v_des - vx[i]) / TAU
+            g_y = MASS * (e_y * v_des - vy[i]) / TAU
+            fx[i] += g_x
+            fy[i] += g_y
 
             # ── Agent repulsion ───────────────────────────────────────────────
-            f_rep_x, f_rep_y = 0.0, 0.0
-            for j, other in enumerate(active):
-                if j == i:
+            for j in range(n):
+                if j == i or active[j].floor != agent.floor:
                     continue
-                if other.floor != agent.floor:
-                    continue
-                ddx, ddy = agent.x - other.x, agent.y - other.y
+                ddx, ddy = px[i] - px[j], py[i] - py[j]
                 d = math.hypot(ddx, ddy)
-                if d < 0.01 or d > 3.0:  # ignore beyond 3 m
+                if d < 0.01 or d > 5.0:
                     continue
-                r_ij = R_agent * 2   # sum of radii
-                mag  = A_repulse * math.exp((r_ij - d) / B_repulse)
-                f_rep_x += mag * ddx / d
-                f_rep_y += mag * ddy / d
-
-            # Clamp repulsion to avoid numerical explosion
-            rep_mag = math.hypot(f_rep_x, f_rep_y)
-            if rep_mag > 50.0:
-                f_rep_x *= 50.0 / rep_mag
-                f_rep_y *= 50.0 / rep_mag
+                r_ij = R_AGENT * 2
+                mag = A_REPULSE * math.exp((r_ij - d) / B_REPULSE)
+                fx[i] += mag * ddx / d
+                fy[i] += mag * ddy / d
 
             # ── Hazard flee force ─────────────────────────────────────────────
-            f_flee_x, f_flee_y = 0.0, 0.0
-            h_here = hazard_levels.get(agent.current_node, 0.0)
-            if h_here > 0.1:
-                # Flee radially away from current hazard node
-                hx, hy   = self.node_positions.get(agent.current_node, (agent.x, agent.y))
-                ddx, ddy = agent.x - hx, agent.y - hy
-                d        = math.hypot(ddx, ddy)
-                if d < 0.01:
-                    ddx, ddy = 1.0, 0.0
-                    d = 1.0
-                f_flee_x = K_FLEE * h_here * ddx / d
-                f_flee_y = K_FLEE * h_here * ddy / d
+            h = hazard_levels.get(agent.current_node, 0.0)
+            if h > 0.1:
+                hx_, hy_ = self.node_positions.get(agent.current_node, (px[i], py[i]))
+                ddx_, ddy_ = px[i] - hx_, py[i] - hy_
+                dd_ = math.hypot(ddx_, ddy_)
+                if dd_ < 0.01: ddx_, ddy_, dd_ = 1.0, 0.0, 1.0
+                flee_mag = MASS * K_FLEE * h
+                fx[i] += flee_mag * ddx_ / dd_
+                fy[i] += flee_mag * ddy_ / dd_
 
-            # ── Total force → acceleration (mass = 1 kg, simplified) ─────────
-            ax = f_goal_x + f_rep_x + f_flee_x
-            ay = f_goal_y + f_rep_y + f_flee_y
+        # ── Clamp forces & integrate (all agents simultaneously) ─────────────
+        for i, agent in enumerate(active):
+            f_mag = math.hypot(fx[i], fy[i])
+            if f_mag > MASS * 15.0:   # cap at 15 m/s²
+                scale_ = MASS * 15.0 / f_mag
+                fx[i] *= scale_
+                fy[i] *= scale_
 
-            # Clamp total acceleration
-            a_mag = math.hypot(ax, ay)
-            if a_mag > 20.0:
-                ax *= 20.0 / a_mag
-                ay *= 20.0 / a_mag
+            agent.vx += (fx[i] / MASS) * dt
+            agent.vy += (fy[i] / MASS) * dt
 
-            # Euler integration
-            agent.vx += ax * dt
-            agent.vy += ay * dt
+            # Hard speed cap
+            v = math.hypot(agent.vx, agent.vy)
+            if v > V_MAX_ABS:
+                agent.vx *= V_MAX_ABS / v
+                agent.vy *= V_MAX_ABS / v
 
-            # Hard speed cap: v_max = 3.5 m/s (sprint)
-            v_mag = math.hypot(agent.vx, agent.vy)
-            v_cap = min(agent.desired_speed * 2.0, 3.5)
-            if v_mag > v_cap:
-                agent.vx *= v_cap / v_mag
-                agent.vy *= v_cap / v_mag
-
-            # Update position
             agent.x += agent.vx * dt
             agent.y += agent.vy * dt
             agent.age += dt
-
-            # Update positions array for subsequent agents this tick
-            positions[i] = [agent.x, agent.y]

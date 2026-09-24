@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LBP — Baseline Evacuation Simulator</title>
+  <title>Industrial Evacuation Simulator</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -13,8 +13,8 @@
   <div class="brand">
     <span class="brand-icon">🏭</span>
     <div>
-      <div class="brand-title">LBP Baseline Simulator</div>
-      <div class="brand-sub">Dijkstra Routing · Social Force Model · Classical Baseline</div>
+      <div class="brand-title">Industrial Evacuation Simulator</div>
+      <div class="brand-sub">Phase 1 Baseline · Dijkstra Routing · Social Force Model</div>
     </div>
   </div>
 
@@ -22,6 +22,7 @@
     <button class="floor-tab active" data-floor="1">Floor 1</button>
     <button class="floor-tab"        data-floor="2">Floor 2</button>
     <button class="floor-tab"        data-floor="3">Floor 3</button>
+    <button class="btn-fit-header" id="btn-fit" title="Reset view (or double-click canvas)">⊡ Fit</button>
   </div>
 
   <div class="conn-badge">
@@ -30,19 +31,21 @@
   </div>
 </header>
 
-<!-- ── Main layout ────────────────────────────────────────────────────────── -->
+<!-- ── Main ──────────────────────────────────────────────────────────────── -->
 <div class="main">
 
   <!-- Canvas -->
   <div class="canvas-wrap">
     <canvas id="sim-canvas"></canvas>
 
+    <div class="zoom-hint">🖱 Scroll to zoom · Drag to pan · Double-click to fit</div>
+
     <!-- Tooltip -->
     <div class="tooltip" id="tooltip">
       <div class="tooltip-title" id="tt-name">—</div>
       <div class="tooltip-row"><span>Type</span><span id="tt-type">—</span></div>
       <div class="tooltip-row"><span>Floor</span><span id="tt-floor">—</span></div>
-      <div class="tooltip-row"><span>Hazard</span><span id="tt-hazard" style="color:var(--text-muted)">None</span></div>
+      <div class="tooltip-row"><span>Hazard</span><span id="tt-hazard">Safe</span></div>
       <div class="tooltip-row"><span>Occupancy</span><span id="tt-occupancy">—</span></div>
     </div>
 
@@ -52,7 +55,7 @@
       <div class="legend-item"><div class="legend-dot" style="background:#eab308"></div>Rerouting</div>
       <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div>In Danger</div>
       <div class="legend-item"><div class="legend-dot" style="background:#94a3b8"></div>Evacuated</div>
-      <div class="legend-item"><div class="legend-dot" style="background:#22c55e;opacity:0.5"></div>Exit Node</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#22c55e;opacity:0.4;border:1px solid #22c55e"></div>Exit</div>
     </div>
   </div>
 
@@ -67,43 +70,38 @@
         <button class="btn"         id="btn-pause">⏸ Pause</button>
         <button class="btn"         id="btn-reset">↺ Reset</button>
       </div>
-
       <div class="control-row">
         <span class="control-label">Speed</span>
-        <input id="speed-slider" type="range" min="0.2" max="8" step="0.2" value="1.0">
-        <span class="control-val" id="speed-val">1×</span>
+        <input id="speed-slider" type="range" min="0.5" max="8" step="0.5" value="2">
+        <span class="control-val" id="speed-val">2.0×</span>
       </div>
-
       <div class="control-row">
         <span class="control-label">Evacuees</span>
         <input id="evacuee-count" type="number" min="5" max="200" value="60">
-        <span class="control-label" style="font-size:0.65rem;color:var(--text-muted)">(apply on reset)</span>
+        <span style="font-size:0.65rem;color:var(--text-muted)">(on reset)</span>
       </div>
     </div>
 
     <!-- Disaster Injection -->
     <div class="panel">
       <div class="panel-title">Inject Disaster</div>
-
-      <select id="node-select">
-        <option value="">Loading nodes…</option>
-      </select>
-
+      <select id="node-select"><option>Loading…</option></select>
       <select id="hazard-type">
         <option value="GAS_RELEASE">💨 Gas Release</option>
         <option value="FIRE">🔥 Fire</option>
         <option value="EXPLOSION">💥 Explosion</option>
         <option value="CHEMICAL_SPILL">☣️ Chemical Spill</option>
       </select>
-
       <div class="control-row">
         <span class="control-label">Intensity</span>
-        <input id="intensity-slider" type="range" min="0.3" max="1.0" step="0.05" value="0.8">
-        <span class="control-val" id="intensity-val">0.8</span>
+        <input id="intensity-slider" type="range" min="0.3" max="1.0" step="0.05" value="0.75">
+        <span class="control-val" id="intensity-val">0.75</span>
       </div>
-
-      <button class="inject-btn" id="btn-inject">💥 Inject Disaster</button>
+      <button class="inject-btn" id="btn-inject">💥 Inject</button>
       <div class="inject-ack" id="inject-ack"></div>
+      <div style="font-size:0.68rem;color:var(--text-muted);margin-top:6px">
+        Click a node on the canvas to select it here
+      </div>
     </div>
 
     <!-- Live Metrics -->
@@ -139,16 +137,15 @@
       </div>
     </div>
 
-    <!-- Footer -->
     <div class="sidebar-footer">
-      <strong>Routing:</strong> Dijkstra · Hazard-weighted edges<br>
+      <strong>Routing:</strong> Dijkstra · hazard-weighted edges<br>
       <strong>Physics:</strong> Helbing Social Force Model (1995)<br>
-      <strong>Hazard:</strong> Discrete diffusion on graph<br><br>
-      <em>Phase 1 Baseline</em> — Click any node on the canvas to select it for disaster injection.
+      <strong>Hazard:</strong> Distance-attenuated diffusion<br>
+      <em>Phase 1 Baseline</em> — next phase: MARL ST-TBA-GAT trained on this simulator.
     </div>
 
-  </div><!-- /sidebar -->
-</div><!-- /main -->
+  </div>
+</div>
 
 <script src="/static/simulator.js"></script>
 </body>

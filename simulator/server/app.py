@@ -1,6 +1,6 @@
 """
-FastAPI + WebSocket server for the LBP Baseline Simulator.
-Serves the static UI and streams simulation state at 10 Hz via WebSocket.
+FastAPI + WebSocket server for the Industrial Evacuation Simulator.
+Serves the static UI and streams simulation state at ~12 Hz via WebSocket.
 """
 from __future__ import annotations
 import os, sys, json, asyncio
@@ -19,7 +19,7 @@ sys.path.insert(0, str(_REPO_DIR))
 
 from simulator.engine.simulation import Simulation
 
-app = FastAPI(title="LBP Baseline Simulator")
+app = FastAPI(title="Industrial Evacuation Simulator")
 
 # ── Simulation singleton ──────────────────────────────────────────────────────
 sim = Simulation()

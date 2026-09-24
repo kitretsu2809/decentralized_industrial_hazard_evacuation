@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-LBP Baseline Simulator — Entry Point
-=====================================
+Industrial Evacuation Simulator — Entry Point
+==============================================
 Launches the FastAPI + WebSocket server serving the evacuation simulation.
 
 Usage:
@@ -20,15 +20,15 @@ if _ROOT not in sys.path:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="LBP Baseline Evacuation Simulator")
+    parser = argparse.ArgumentParser(description="Industrial Evacuation Simulator")
     parser.add_argument("--port", type=int, default=8080, help="Port (default: 8080)")
     parser.add_argument("--host", default="127.0.0.1", help="Host (default: 127.0.0.1)")
     parser.add_argument("--reload", action="store_true", help="Auto-reload on code changes")
     args = parser.parse_args()
 
     print("\n" + "=" * 60)
-    print("  LBP Baseline Evacuation Simulator")
-    print("  Phase 1: Dijkstra Routing + Social Force Model")
+    print("  Industrial Evacuation Simulator")
+    print("  Phase 1: Classical Dijkstra Routing + Social Force Model")
     print("=" * 60)
     print(f"\n  ▶  Open browser:  http://{args.host}:{args.port}")
     print(f"     Ctrl+C to stop\n")

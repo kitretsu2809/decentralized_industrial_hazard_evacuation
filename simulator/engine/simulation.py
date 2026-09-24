@@ -1,17 +1,12 @@
 """
-Main simulation loop for the LBP Baseline Simulator.
-Orchestrates: HazardModel → DijkstraRouter → SocialForceModel → Pedestrian states.
+Main simulation loop — fixed-timestep accumulator pattern.
+Speed multiplier correctly controls how many physics steps run per wall-second.
 """
 from __future__ import annotations
-import sys, os
-import asyncio
-import math
-import random
-import time
-from typing import Dict, List, Optional, Set, Callable, Awaitable
+import sys, os, asyncio, math, random, time
+from typing import Dict, List, Optional, Callable, Awaitable
 
-# Add repo root to sys.path so we can import core/
-_REPO = os.path.join(os.path.dirname(__file__), "..", "..", )
+_REPO = os.path.join(os.path.dirname(__file__), "..", "..")
 if _REPO not in sys.path:
     sys.path.insert(0, _REPO)
 
@@ -21,28 +16,24 @@ from .dijkstra_router import DijkstraRouter
 from .social_force import SocialForceModel
 
 
-def _build_adjacency(edge_list):
+def _build_adjacency_with_dist(edge_list):
+    """Returns {node: [(neighbour, distance_m), ...]}"""
     adj = {}
-    for src, tgt, *_ in edge_list:
-        adj.setdefault(src, []).append(tgt)
-        adj.setdefault(tgt, []).append(src)
+    for src, tgt, dist, *_ in edge_list:
+        adj.setdefault(src, []).append((tgt, float(dist)))
+        adj.setdefault(tgt, []).append((src, float(dist)))
     return adj
 
 
 def _load_building():
-    """Load the industrial plant building graph from the existing core module."""
     sys.path.insert(0, _REPO)
     try:
         from sim.services.environment.src.floorplan_generator import generate_industrial_plant
         from core.graph.types import NodeType
         building = generate_industrial_plant()
 
-        node_positions: Dict[str, tuple] = {}
-        node_floors: Dict[str, int]      = {}
-        node_types: Dict[str, str]       = {}
-        node_capacities: Dict[str, int]  = {}
-        edge_list: List[tuple]           = []
-        exits: List[str]                 = []
+        node_positions, node_floors, node_types, node_capacities = {}, {}, {}, {}
+        edge_list, exits = [], []
 
         for floor_level, floor in building.floors.items():
             for nid, node in floor.nodes.items():
@@ -54,130 +45,112 @@ def _load_building():
                     exits.append(nid)
             for edge in floor.edges:
                 edge_list.append((edge.source, edge.target, edge.distance, edge.width))
-
-        # Cross-floor edges
         for edge in building.cross_floor_edges:
             edge_list.append((edge.source, edge.target, edge.distance, edge.width))
 
-        return node_positions, node_floors, node_types, node_capacities, edge_list, exits, building.name
-
+        b_name = building.name.replace("LBP ", "").strip()
+        return (node_positions, node_floors, node_types,
+                node_capacities, edge_list, exits, b_name)
     except ImportError as e:
-        raise RuntimeError(f"Could not import building model: {e}\n"
-                           f"Run from the repo root: python run_simulator.py")
+        raise RuntimeError(f"Could not import building model: {e}")
 
 
 class Simulation:
-    DT = 0.1          # physics timestep seconds
-    REROUTE_INTERVAL = 3.0   # seconds between periodic reroutes
+    DT = 0.1            # physics timestep (seconds) — keep ≤0.1 for SFM stability
 
     def __init__(self):
-        # Load building
         (self.node_positions, self.node_floors, self.node_types,
          self.node_capacities, self.edge_list, self.exits,
          self.building_name) = _load_building()
 
-        adj = _build_adjacency(self.edge_list)
-        # Ensure all nodes exist in adjacency
+        adj_with_dist = _build_adjacency_with_dist(self.edge_list)
         for nid in self.node_positions:
-            adj.setdefault(nid, [])
+            adj_with_dist.setdefault(nid, [])
 
-        # Sub-systems
-        self.hazard  = HazardModel(adj)
+        self.hazard  = HazardModel(adj_with_dist)
         self.router  = DijkstraRouter()
         self.router.build(self.edge_list, self.exits, self.node_floors)
         self.sfm     = SocialForceModel(self.node_positions)
 
-        # State
         self.agents: List[Pedestrian] = []
         self.t: float        = 0.0
-        self.running: bool   = False
-        self.speed: float    = 1.0    # time-scale multiplier
+        self.running: bool   = True   # auto-start
+        self.speed: float    = 2.0    # 2× default so movement is clearly visible
         self.num_evacuees: int = 60
         self._last_reroute: float = 0.0
+        self._accumulator: float  = 0.0
         self._broadcast_cb: Optional[Callable[..., Awaitable]] = None
-        self._task: Optional[asyncio.Task] = None
 
         self._init_agents()
 
-    # ── Public control API ────────────────────────────────────────────────────
+    # ── Control API ───────────────────────────────────────────────────────────
+    def set_broadcast(self, cb): self._broadcast_cb = cb
+    def play(self):  self.running = True
+    def pause(self): self.running = False
 
-    def set_broadcast(self, cb: Callable[..., Awaitable]) -> None:
-        self._broadcast_cb = cb
-
-    def play(self) -> None:
-        self.running = True
-
-    def pause(self) -> None:
-        self.running = False
-
-    def reset(self, num_evacuees: Optional[int] = None) -> None:
-        if num_evacuees is not None:
-            self.num_evacuees = num_evacuees
-        self.t       = 0.0
-        self.running = False
+    def reset(self, num_evacuees=None):
+        if num_evacuees: self.num_evacuees = num_evacuees
+        self.t = 0.0
+        self._accumulator = 0.0
+        self._last_reroute = 0.0
         self.hazard.reset()
         self.router.update_weights({}, set())
         self._init_agents()
+        self.running = True   # auto-resume on reset
 
-    def set_speed(self, speed: float) -> None:
-        self.speed = max(0.1, min(speed, 10.0))
+    def set_speed(self, speed): self.speed = max(0.1, min(10.0, speed))
 
-    def inject_disaster(self, node_id: str, htype_str: str, intensity: float) -> bool:
-        try:
-            htype = HazardType(htype_str)
-        except ValueError:
-            return False
-        if node_id not in self.node_positions:
-            return False
+    def inject_disaster(self, node_id, htype_str, intensity):
+        try:    htype = HazardType(htype_str)
+        except: return False
+        if node_id not in self.node_positions: return False
         self.hazard.inject(node_id, htype, min(1.0, max(0.0, intensity)))
-        # Force immediate reroute for all agents whose path passes through hazard
         self._reroute_all(force=True)
         return True
 
-    # ── Main loop ─────────────────────────────────────────────────────────────
-
-    async def run_loop(self) -> None:
-        """Async loop: advances physics at DT, broadcasts state at ~10 Hz."""
-        BROADCAST_INTERVAL = 0.10    # seconds wall-time between broadcasts
+    # ── Main async loop (fixed-timestep accumulator) ──────────────────────────
+    async def run_loop(self):
+        BROADCAST_INTERVAL = 0.08   # ~12 Hz
+        LOOP_SLEEP         = 0.012  # ~80 Hz loop
         last_broadcast = time.monotonic()
+        last_loop      = time.monotonic()
 
         while True:
-            if self.running:
-                real_dt = self.DT * self.speed
-                self._tick(real_dt)
+            now     = time.monotonic()
+            wall_dt = min(now - last_loop, 0.1)   # cap to avoid spiral-of-death
+            last_loop = now
 
-            now = time.monotonic()
+            if self.running:
+                # Accumulate sim-time to advance
+                self._accumulator += wall_dt * self.speed
+                # Run as many full DT-steps as the accumulator allows
+                steps = 0
+                while self._accumulator >= self.DT and steps < 20:
+                    self._tick()
+                    self._accumulator -= self.DT
+                    steps += 1
+
             if now - last_broadcast >= BROADCAST_INTERVAL:
                 if self._broadcast_cb:
                     await self._broadcast_cb(self.state_dict())
                 last_broadcast = now
 
-            await asyncio.sleep(max(0, self.DT - 0.005))
+            await asyncio.sleep(LOOP_SLEEP)
 
-    # ── Tick ──────────────────────────────────────────────────────────────────
-
-    def _tick(self, dt: float) -> None:
-        self.t += self.DT   # simulation time (not wall time)
-
-        # 1. Advance hazard diffusion
+    # ── Single physics tick ───────────────────────────────────────────────────
+    def _tick(self):
+        self.t += self.DT
         self.hazard.step(self.DT)
-
-        # 2. Update router weights
         self.router.update_weights(self.hazard.levels, self.hazard.blocked)
 
-        # 3. Periodic reroute
-        if self.t - self._last_reroute >= self.REROUTE_INTERVAL:
+        if self.t - self._last_reroute >= 3.0:
             self._reroute_all()
             self._last_reroute = self.t
 
-        # 4. Update pedestrian states
         self._update_states()
-
-        # 5. Social Force Model step
         self.sfm.step(self.agents, self.hazard.levels, self.hazard.blocked, self.DT)
 
-    def _reroute_all(self, force: bool = False) -> None:
-        """Recompute Dijkstra paths for agents that need rerouting."""
+    def _reroute_all(self, force=False):
         for agent in self.agents:
             if agent.state in (PedestrianState.EVACUATED, PedestrianState.CASUALTY):
                 continue
@@ -188,76 +161,64 @@ class Simulation:
                 or self.router.is_blocked_path(agent.path, self.hazard.blocked)
             )
             if needs:
-                new_path = self.router.get_path(agent.current_node or _nearest_node(
-                    agent.x, agent.y, self.node_positions, agent.floor), agent.floor)
+                src = agent.current_node or _nearest_node(
+                    agent.x, agent.y, self.node_positions, agent.floor)
+                new_path = self.router.get_path(src, agent.floor)
                 if new_path:
-                    agent.path = new_path[1:]  # first element is current node
+                    agent.path = new_path[1:]
                     if agent.state == PedestrianState.MOVING:
                         agent.state = PedestrianState.REROUTING
-                    asyncio.get_event_loop().call_later(
-                        random.uniform(0.5, 2.0),
-                        lambda a=agent: setattr(a, "state", PedestrianState.MOVING)
-                        if a.state == PedestrianState.REROUTING else None
-                    )
+                    # Snap back to moving after brief rerouting visual
+                    self.t  # just to reference self
 
-    def _update_states(self) -> None:
+    def _update_states(self):
         for agent in self.agents:
             if agent.state in (PedestrianState.EVACUATED, PedestrianState.CASUALTY):
                 continue
-
-            # Check if reached exit
             if agent.current_node in self.exits:
                 agent.state = PedestrianState.EVACUATED
-                agent.vx, agent.vy, agent.path = 0.0, 0.0, []
+                agent.vx = agent.vy = 0.0
+                agent.path = []
                 continue
-
-            # Check hazard at current node
             h = self.hazard.levels.get(agent.current_node, 0.0)
             if h >= LETHAL_THRESHOLD:
                 agent.state = PedestrianState.CASUALTY
-                agent.vx, agent.vy, agent.path = 0.0, 0.0, []
+                agent.vx = agent.vy = 0.0
+                agent.path = []
             elif h >= DANGER_THRESHOLD:
                 agent.state = PedestrianState.DANGER
             elif agent.state == PedestrianState.DANGER:
                 agent.state = PedestrianState.MOVING
-
-            # If no path, try to reroute
+            elif agent.state == PedestrianState.REROUTING and agent.path:
+                agent.state = PedestrianState.MOVING
             if not agent.path and agent.state not in (
                     PedestrianState.EVACUATED, PedestrianState.CASUALTY):
                 src = agent.current_node or _nearest_node(
                     agent.x, agent.y, self.node_positions, agent.floor)
-                path = self.router.get_path(src, agent.floor)
-                if path:
-                    agent.path = path[1:]
+                p = self.router.get_path(src, agent.floor)
+                if p: agent.path = p[1:]
 
-    # ── Initialisation helpers ────────────────────────────────────────────────
-
-    def _init_agents(self) -> None:
+    def _init_agents(self):
         self.agents = spawn_pedestrians(
             self.num_evacuees, self.node_positions, self.node_floors)
-        # Compute initial Dijkstra paths
         for agent in self.agents:
-            src = agent.current_node
-            path = self.router.get_path(src, agent.floor)
-            agent.path = path[1:] if path else []
+            p = self.router.get_path(agent.current_node, agent.floor)
+            agent.path = p[1:] if p else []
 
-    # ── State serialisation ───────────────────────────────────────────────────
-
-    def state_dict(self) -> dict:
-        m = self.metrics()
+    # ── Serialisation ─────────────────────────────────────────────────────────
+    def state_dict(self):
         return {
             "t":           round(self.t, 1),
             "running":     self.running,
             "speed":       self.speed,
             "pedestrians": [a.to_dict() for a in self.agents],
             "hazards":     self.hazard.to_dict(),
-            "metrics":     m,
+            "metrics":     self.metrics(),
         }
 
-    def metrics(self) -> dict:
+    def metrics(self):
         counts = {s: 0 for s in PedestrianState}
-        for a in self.agents:
-            counts[a.state] += 1
+        for a in self.agents: counts[a.state] += 1
         return {
             "total":      len(self.agents),
             "moving":     counts[PedestrianState.MOVING],
@@ -268,41 +229,26 @@ class Simulation:
             "sim_time":   round(self.t, 1),
         }
 
-    def building_dict(self) -> dict:
-        """Return full building graph for frontend rendering."""
+    def building_dict(self):
         nodes = {}
         for nid, pos in self.node_positions.items():
             nodes[nid] = {
-                "id":       nid,
-                "x":        pos[0],
-                "y":        pos[1],
-                "floor":    self.node_floors.get(nid, 1),
-                "type":     self.node_types.get(nid, "ROOM"),
+                "id": nid, "x": pos[0], "y": pos[1],
+                "floor": self.node_floors.get(nid, 1),
+                "type":  self.node_types.get(nid, "ROOM"),
                 "capacity": self.node_capacities.get(nid, 10),
-                "is_exit":  nid in self.exits,
+                "is_exit": nid in self.exits,
             }
-
-        edges_out = []
-        for src, tgt, dist, width in self.edge_list:
-            edges_out.append({"source": src, "target": tgt,
-                              "distance": dist, "width": width})
-
-        return {
-            "name":  self.building_name,
-            "nodes": nodes,
-            "edges": edges_out,
-            "exits": self.exits,
-        }
+        edges_out = [{"source": s, "target": t, "distance": d, "width": w}
+                     for s, t, d, w in self.edge_list]
+        return {"name": self.building_name, "nodes": nodes,
+                "edges": edges_out, "exits": self.exits}
 
 
-# ── Utility ───────────────────────────────────────────────────────────────────
-
-def _nearest_node(x: float, y: float, positions: Dict[str, tuple],
-                  floor: int) -> str:
+def _nearest_node(x, y, positions, floor):
     best, best_d = None, math.inf
     for nid, (nx_, ny_) in positions.items():
         d = math.hypot(x - nx_, y - ny_)
         if d < best_d:
-            best_d = d
-            best   = nid
+            best_d = d; best = nid
     return best or ""

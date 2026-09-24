@@ -1,4 +1,4 @@
-/* LBP Baseline Simulator — Minimal Dark Theme */
+/* Industrial Evacuation Simulator — Minimal Dark Theme */
 :root {
   --bg:        #0f172a;
   --surface:   #1e293b;
@@ -286,3 +286,29 @@ select:focus { outline: none; border-color: var(--accent); }
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* Additional styles for v2 fixes */
+.zoom-hint {
+  position: absolute;
+  top: 10px; left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.68rem;
+  color: rgba(148,163,184,0.4);
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+  transition: opacity 0.5s;
+}
+.btn-fit-header {
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.73rem;
+  font-weight: 500;
+  margin-left: 6px;
+  transition: all 0.15s;
+}
+.btn-fit-header:hover { border-color: var(--accent); color: var(--accent); }

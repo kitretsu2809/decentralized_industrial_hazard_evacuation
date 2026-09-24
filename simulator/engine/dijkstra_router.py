@@ -1,5 +1,5 @@
 """
-Dijkstra-based router for the LBP Baseline Simulator.
+Dijkstra-based router for the Industrial Evacuation Simulator.
 Uses hazard-weighted edge costs so routes avoid dangerous zones.
 cost(edge) = distance * (1 + 10 * max_hazard_on_endpoints)
 """
