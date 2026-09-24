@@ -84,3 +84,5 @@ coverage.xml
 
 # ─── Implementation plan (internal agent file) ────────────────────────────────
 implementation_plan.md
+
+# (simulator-baseline branch: all simulator/ code IS tracked)
