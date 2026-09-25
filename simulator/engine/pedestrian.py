@@ -74,17 +74,13 @@ class Pedestrian:
 def spawn_pedestrians(n: int, node_positions: dict, node_floors: dict,
                       exclude_types: set = None) -> List[Pedestrian]:
     """
-    Spawn n pedestrians randomly across nodes (skipping exits by default).
-    node_positions: {node_id: (x, y)}
-    node_floors:    {node_id: floor_int}
+    Spawn n pedestrians distributed realistically across all floors in the facility
+    (excluding muster exits and stairwells).
     """
-    if exclude_types is None:
-        exclude_types = {"EXIT", "STAIRWELL"}
-
     eligible = [
         nid for nid in node_positions
-        if node_floors.get(nid) in (1,) and  # start on floor 1 for simplicity
-        not any(t.lower() in nid.lower() for t in ("muster", "helipad", "slide_escape"))
+        if not any(t.lower() in nid.lower() for t in ("muster", "helipad", "slide_escape"))
+        and not any(t.lower() in nid.lower() for t in ("stair", "hoist", "elevator"))
     ]
     if not eligible:
         eligible = list(node_positions.keys())
@@ -93,19 +89,24 @@ def spawn_pedestrians(n: int, node_positions: dict, node_floors: dict,
     for i in range(n):
         node = random.choice(eligible)
         x, y = node_positions[node]
-        # Scatter slightly within the room / node area (±2 m)
-        x += random.uniform(-2.0, 2.0)
-        y += random.uniform(-2.0, 2.0)
+        fl = node_floors.get(node, 1)
+
+        # Gentle scatter within workstation room (radius <= 1.2m)
+        r = random.uniform(0.2, 1.2)
+        ang = random.uniform(0, 2 * math.pi)
+        px = x + r * math.cos(ang)
+        py = y + r * math.sin(ang)
+
         agents.append(Pedestrian(
-            id=i, x=x, y=y,
-            floor=node_floors.get(node, 1),
+            id=i, x=px, y=py,
+            floor=fl,
             current_node=node,
             state=PedestrianState.NORMAL,
-            desired_speed=max(0.9, random.gauss(1.34, 0.22)),  # Weidmann distribution
-            anchor_x=x,
-            anchor_y=y,
-            wander_target_x=x + random.uniform(-1.0, 1.0),
-            wander_target_y=y + random.uniform(-1.0, 1.0),
+            desired_speed=max(0.9, random.gauss(1.34, 0.20)),  # Weidmann distribution
+            anchor_x=px,
+            anchor_y=py,
+            wander_target_x=px + random.uniform(-0.6, 0.6),
+            wander_target_y=py + random.uniform(-0.6, 0.6),
             reaction_delay=random.uniform(1.2, 3.5),  # ISO/TR 16738 recognition delay
         ))
     return agents

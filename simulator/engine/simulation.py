@@ -70,7 +70,7 @@ class Simulation:
         self.hazard  = HazardModel(adj_with_dist)
         self.router  = DijkstraRouter()
         self.router.build(self.edge_list, self.exits, self.node_floors)
-        self.sfm     = SocialForceModel(self.node_positions)
+        self.sfm     = SocialForceModel(self.node_positions, self.node_floors, self.edge_list)
 
         self.agents: List[Pedestrian] = []
         self.t: float        = 0.0
