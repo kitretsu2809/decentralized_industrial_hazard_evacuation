@@ -82,7 +82,58 @@ class Simulation:
         self._accumulator: float  = 0.0
         self._broadcast_cb: Optional[Callable[..., Awaitable]] = None
 
+        self.policy_mode: str = "dijkstra"  # "dijkstra" | "marl" | "static"
+        self.policy_multipliers: Dict[Tuple[str, str], float] = {}
+        self.policy_model = None
+        self._policy_edge_index = None
+        self._policy_hidden = None
+        self._last_hazards = {}
+        self._last_crowds = {}
+        self._init_policy()
+
         self._init_agents()
+
+    def _init_policy(self):
+        try:
+            import torch
+            from simulator.policy.st_tba_gat import ST_TBA_GAT
+            self.sorted_nodes = sorted(list(self.node_positions.keys()))
+            self.node_to_idx = {nid: i for i, nid in enumerate(self.sorted_nodes)}
+
+            self.agent_neighbors = {nid: [] for nid in self.sorted_nodes}
+            for s, t, d, w in self.edge_list:
+                if t not in self.agent_neighbors[s]: self.agent_neighbors[s].append(t)
+                if s not in self.agent_neighbors[t]: self.agent_neighbors[t].append(s)
+
+            edges = []
+            for s, nbrs in self.agent_neighbors.items():
+                u_idx = self.node_to_idx[s]
+                for nbr in nbrs:
+                    v_idx = self.node_to_idx[nbr]
+                    edges.append([u_idx, v_idx])
+            self._policy_edge_index = torch.tensor(edges, dtype=torch.long).t()
+
+            ckpt_path = os.path.join(_REPO, "checkpoints", "best_policy.pt")
+            if os.path.exists(ckpt_path):
+                self.policy_model = ST_TBA_GAT.load_checkpoint(ckpt_path, device="cpu")
+            else:
+                self.policy_model = ST_TBA_GAT(node_dim=34, hidden_dim=64, max_corridors=6)
+            self.policy_model.eval()
+            self._policy_hidden = torch.zeros(len(self.sorted_nodes), 64)
+            self._last_hazards = {nid: 0.0 for nid in self.sorted_nodes}
+            self._last_crowds = {nid: 0.0 for nid in self.sorted_nodes}
+        except Exception as e:
+            self.policy_model = None
+
+    def set_policy_mode(self, mode: str):
+        if mode in ("dijkstra", "marl", "static"):
+            self.policy_mode = mode
+            if mode == "marl" and self.policy_model is None:
+                self._init_policy()
+            if mode == "static":
+                self.policy_multipliers = {}
+                self.router.update_weights({}, set())  # Reset to static geometric distance
+            self._reroute_all(force=True)
 
     # ── Control API ───────────────────────────────────────────────────────────
     def set_broadcast(self, cb): self._broadcast_cb = cb
@@ -167,7 +218,14 @@ class Simulation:
     def _tick(self):
         self.t += self.DT
         self.hazard.step(self.DT)
-        self.router.update_weights(self.hazard.levels, self.hazard.blocked)
+        if self.policy_mode == "static":
+            pass  # NFPA 101 Static signage has fixed egress paths (pure geometric distance)
+        elif self.policy_mode == "marl":
+            self.router.update_weights(
+                self.hazard.levels, self.hazard.blocked, self.policy_multipliers
+            )
+        else:
+            self.router.update_weights(self.hazard.levels, self.hazard.blocked)
 
         if self.t - self._last_reroute >= 3.0:
             self._reroute_all()
@@ -177,6 +235,15 @@ class Simulation:
         self.sfm.step(self.agents, self.hazard.levels, self.hazard.blocked, self.DT)
 
     def _reroute_all(self, force=False):
+        if self.policy_mode == "static":
+            # Static NFPA signage has no environmental awareness; pedestrians cannot reroute around hazards
+            for agent in self.agents:
+                if not agent.path and agent.state in (PedestrianState.MOVING, PedestrianState.REACTING, PedestrianState.DANGER):
+                    src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, self.node_floors, agent.floor)
+                    p = self.router.get_path(src, agent.floor)
+                    if p: agent.path = p[1:]
+            return
+
         for agent in self.agents:
             if agent.state in (PedestrianState.NORMAL, PedestrianState.REACTING,
                                PedestrianState.EVACUATED, PedestrianState.CASUALTY):
@@ -236,10 +303,11 @@ class Simulation:
             # 3. Danger override: if local hazard threatens room, react immediately
             if h >= DANGER_THRESHOLD:
                 agent.state = PedestrianState.DANGER
-                if not agent.path or self.router.is_blocked_path(agent.path, self.hazard.blocked):
-                    src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, self.node_floors, agent.floor)
-                    p = self.router.get_path(src, agent.floor)
-                    if p: agent.path = p[1:]
+                if self.policy_mode != "static":
+                    if not agent.path or self.router.is_blocked_path(agent.path, self.hazard.blocked):
+                        src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, self.node_floors, agent.floor)
+                        p = self.router.get_path(src, agent.floor)
+                        if p: agent.path = p[1:]
                 continue
 
             # 4. Normal Operating Regime (No alarm active, safe room)
@@ -283,12 +351,9 @@ class Simulation:
     def compute_signboards(self) -> Dict[str, List[Dict]]:
         """
         Computes the dynamic directional signage state for each edge router node.
-        This provides the classical baseline actions:
-          - 'ARROW': Designated safe egress path to nearest exit (Green Arrow)
-          - 'BLOCKED': Hazard level >= 0.80 or node blocked (Red X)
-          - 'CAUTION': Hazard level >= 0.30 (Amber warning detour)
-          - 'NORMAL_ARROW': Low-hazard quiescent exit indicator
-          - 'NORMAL': Low-hazard corridor in standby
+        Supports both:
+          - 'marl': ST-TBA-GAT neural policy edge guidance.
+          - 'dijkstra': Classical shortest safe path.
         """
         if self.router.G is None:
             return {}
@@ -299,6 +364,117 @@ class Simulation:
             adj.setdefault(s, set()).add(t)
             adj.setdefault(t, set()).add(s)
 
+        # ── 1. ST-TBA-GAT Neural MARL Policy ─────────────────────────────────
+        if self.policy_mode == "marl" and self.policy_model is not None and self._policy_edge_index is not None:
+            try:
+                import torch
+                node_counts = {nid: 0 for nid in self.sorted_nodes}
+                for ped in self.agents:
+                    if ped.state not in (PedestrianState.EVACUATED, PedestrianState.CASUALTY):
+                        if ped.current_node in node_counts:
+                            node_counts[ped.current_node] += 1
+
+                obs_list = []
+                for nid in self.sorted_nodes:
+                    cap = max(1, self.node_capacities.get(nid, 10))
+                    pop = node_counts.get(nid, 0)
+                    rho = min(2.0, pop / float(cap))
+                    h = self.hazard.levels.get(nid, 0.0)
+                    floor = self.node_floors.get(nid, 1) / 3.0
+                    is_stair = 1.0 if "stair" in nid else 0.0
+                    is_exit = 1.0 if nid in self.exits else 0.0
+                    cap_norm = min(1.0, cap / 50.0)
+                    delta_h = h - self._last_hazards.get(nid, 0.0)
+                    delta_rho = rho - self._last_crowds.get(nid, 0.0)
+                    time_ratio = min(1.0, self.t / 120.0)
+                    alarm_flag = 1.0 if self.alarm_active else 0.0
+
+                    vec = [h, rho, floor, is_stair, is_exit, cap_norm, delta_h, delta_rho, time_ratio, alarm_flag]
+                    nbrs = self.agent_neighbors.get(nid, [])
+                    for k in range(6):
+                        if k < len(nbrs):
+                            nbr = nbrs[k]
+                            n_h = self.hazard.levels.get(nbr, 0.0)
+                            n_pop = node_counts.get(nbr, 0)
+                            n_cap = max(1, self.node_capacities.get(nbr, 10))
+                            n_rho = min(2.0, n_pop / float(n_cap))
+                            dist, width = 10.0, 2.0
+                            for s, t, d, w in self.edge_list:
+                                if (s == nid and t == nbr) or (t == nid and s == nbr):
+                                    dist, width = d, w
+                                    break
+                            vec.extend([n_h, n_rho, min(1.0, dist / 30.0), min(1.0, width / 5.0)])
+                        else:
+                            vec.extend([0.0, 0.0, 0.0, 0.0])
+                    obs_list.append(vec)
+                    self._last_hazards[nid] = h
+                    self._last_crowds[nid] = rho
+
+                nf = torch.tensor(obs_list, dtype=torch.float32)
+                with torch.no_grad():
+                    actions_t, _, self._policy_hidden, _ = self.policy_model.act(
+                        node_features=nf,
+                        edge_index=self._policy_edge_index,
+                        hidden_state=self._policy_hidden,
+                        deterministic=True,
+                    )
+                actions_np = actions_t.cpu().numpy()
+
+                # Apply neural edge weights to graph
+                for i, u in enumerate(self.sorted_nodes):
+                    nbrs = self.agent_neighbors.get(u, [])
+                    for k, v in enumerate(nbrs[:6]):
+                        act_code = int(actions_np[i, k])
+                        cost = 1.0 if act_code == 0 else (5.0 if act_code == 1 else 999.0)
+                        if self.router.G.has_edge(u, v):
+                            bw = self.router.G[u][v].get("base_weight", 1.0)
+                            self.router.G[u][v]["weight"] = bw * cost
+
+                try:
+                    exit_paths = nx.multi_source_dijkstra_path(
+                        self.router.G, self.exits, weight="weight"
+                    )
+                except Exception:
+                    exit_paths = {}
+
+                signboards: Dict[str, List[Dict]] = {}
+                for i, u in enumerate(self.sorted_nodes):
+                    nbrs = self.agent_neighbors.get(u, [])
+                    if not nbrs:
+                        continue
+                    next_hop = None
+                    if u in exit_paths and len(exit_paths[u]) >= 2:
+                        next_hop = exit_paths[u][-2]
+                    hu = self.hazard.levels.get(u, 0.0)
+                    u_blk = u in self.hazard.blocked
+
+                    node_signs = []
+                    for k, v in enumerate(nbrs[:6]):
+                        hv = self.hazard.levels.get(v, 0.0)
+                        he = max(hu, hv)
+                        act_code = int(actions_np[i, k])
+                        if u_blk or (v in self.hazard.blocked) or act_code == 2 or he >= 0.80:
+                            action = "BLOCKED"
+                        elif act_code == 1 or he >= 0.30:
+                            action = "CAUTION"
+                        elif self.alarm_active and v == next_hop:
+                            action = "ARROW"
+                        elif not self.alarm_active and v == next_hop:
+                            action = "NORMAL_ARROW"
+                        else:
+                            action = "NORMAL"
+
+                        node_signs.append({
+                            "target": v,
+                            "action": action,
+                            "hazard": round(he, 2),
+                        })
+                    signboards[u] = node_signs
+                return signboards
+            except Exception:
+                pass
+
+        # ── 2. Classical Dijkstra Baseline ───────────────────────────────────
         try:
             exit_paths = nx.multi_source_dijkstra_path(
                 self.router.G, self.exits, weight="weight"
@@ -353,6 +529,7 @@ class Simulation:
             "t":            round(self.t, 1),
             "running":      self.running,
             "alarm_active": self.alarm_active,
+            "policy_mode":  self.policy_mode,
             "speed":        self.speed,
             "pedestrians":  [a.to_dict() for a in self.agents],
             "hazards":      self.hazard.to_dict(),

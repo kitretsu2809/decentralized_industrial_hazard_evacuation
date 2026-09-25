@@ -35,9 +35,10 @@ class DijkstraRouter:
         self.node_floors = node_floors
 
     def update_weights(self, hazard_levels: Dict[str, float],
-                       blocked: Set[str]) -> bool:
+                       blocked: Set[str],
+                       policy_multipliers: Optional[Dict[Tuple[str, str], float]] = None) -> bool:
         """
-        Recompute edge weights based on current hazard.
+        Recompute edge weights based on current hazard and optional policy multipliers.
         Returns True if any weight changed significantly (triggers reroute).
         """
         if self.G is None:
@@ -50,6 +51,10 @@ class DijkstraRouter:
                 new_w = 1e9   # effectively impassable
             else:
                 new_w = data["distance"] * (1.0 + 10.0 * h)
+
+            if policy_multipliers:
+                mult = policy_multipliers.get((u, v), policy_multipliers.get((v, u), 1.0))
+                new_w *= mult
 
             prev = self._last_hazard_snapshot.get(f"{u}_{v}", -1)
             if abs(new_w - prev) > 1.0:

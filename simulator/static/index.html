@@ -14,7 +14,7 @@
     <span class="brand-icon">🏭</span>
     <div>
       <div class="brand-title">Industrial Evacuation Simulator</div>
-      <div class="brand-sub">Phase 1 Baseline · Dijkstra Routing · Social Force Model</div>
+      <div class="brand-sub">Phase 2 · ST-TBA-GAT Neural Guidance · MAPPO Multi-Agent RL</div>
     </div>
   </div>
 
@@ -22,6 +22,10 @@
     <div class="status-pill normal" id="facility-status">
       <span class="status-dot"></span>
       <span id="facility-status-text">FACILITY: NORMAL OPERATION</span>
+    </div>
+    <div class="status-pill" style="border-color:rgba(56,189,248,0.35);background:rgba(12,74,110,0.25);margin-left:8px" id="policy-status">
+      <span style="font-size:0.75rem">🧠</span>
+      <span id="policy-status-text" style="color:#38bdf8;font-size:0.72rem;font-weight:600">AI: ST-TBA-GAT ACTIVE</span>
     </div>
     <div class="status-pill" style="border-color:rgba(34,197,94,0.35);background:rgba(6,78,59,0.25);margin-left:8px" id="iot-status">
       <span style="font-size:0.75rem">📡</span>
@@ -54,11 +58,13 @@
     <!-- Tooltip -->
     <div class="tooltip" id="tooltip">
       <div class="tooltip-title" id="tt-name">—</div>
-      <div class="tooltip-row"><span>Type</span><span id="tt-type">—</span></div>
-      <div class="tooltip-row"><span>Floor</span><span id="tt-floor">—</span></div>
-      <div class="tooltip-row"><span>Hazard</span><span id="tt-hazard">Safe</span></div>
-      <div class="tooltip-row"><span>Occupancy</span><span id="tt-occupancy">—</span></div>
-      <div class="tooltip-row"><span>Signboard</span><span id="tt-sign" style="color:#4ade80;font-weight:600">—</span></div>
+      <div class="tooltip-row" id="tt-row-type"><span>Type</span><span id="tt-type">—</span></div>
+      <div class="tooltip-row" id="tt-row-floor"><span>Floor</span><span id="tt-floor">—</span></div>
+      <div class="tooltip-row" id="tt-row-controller" style="display:none"><span>Controlled By</span><span id="tt-controller" style="color:#38bdf8;font-weight:700">—</span></div>
+      <div class="tooltip-row" id="tt-row-target" style="display:none"><span>Directs Towards</span><span id="tt-target" style="color:#fbbf24;font-weight:600">—</span></div>
+      <div class="tooltip-row" id="tt-row-hazard"><span>Hazard</span><span id="tt-hazard">Safe</span></div>
+      <div class="tooltip-row" id="tt-row-occupancy"><span>Occupancy</span><span id="tt-occupancy">—</span></div>
+      <div class="tooltip-row" id="tt-row-sign"><span>Signboard</span><span id="tt-sign" style="color:#4ade80;font-weight:600">—</span></div>
     </div>
 
     <!-- Legend -->
@@ -104,8 +110,8 @@
     <div class="panel">
       <div class="panel-title">IoT Dynamic Signboards (Policy Output)</div>
       <select id="sign-policy-select" style="margin-bottom:6px">
+        <option value="marl">🤖 ST-TBA-GAT (Neural Edge Inference)</option>
         <option value="dijkstra">📍 Classical Safe Egress (Dijkstra)</option>
-        <option value="marl_demo">🤖 MARL Neural Policy (Active Demo)</option>
         <option value="random">🎲 Random Action Exploration (ε-greedy)</option>
       </select>
       <div style="font-size:0.68rem;color:var(--text-muted);line-height:1.35">

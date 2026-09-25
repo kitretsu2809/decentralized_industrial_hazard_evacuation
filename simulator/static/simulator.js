@@ -159,6 +159,7 @@ function connectWS() {
   ws = new WebSocket(WS_URL);
   ws.onopen = () => {
     setConn(true);
+    send({action: "set_policy_mode", mode: signPolicy === "marl" ? "marl" : "dijkstra"});
   };
   ws.onclose = () => { setConn(false); setTimeout(connectWS, 2000); };
   ws.onerror = () => ws.close();
@@ -373,32 +374,27 @@ function drawCorridors(edges, hazards) {
 }
 
 // ── Dynamic IoT Edge Router Signboards ───────────────────────────────────────
-let signPolicy = "dijkstra"; // "dijkstra", "marl_demo", "random"
-let marlDemoCache = {};
+let signPolicy = "marl"; // "marl", "dijkstra", "random"
+let randomExplorationCache = {};
 let lastMarlUpdate = 0;
+let hoverSign = null;       // Active hovered signboard { u, v, px, py, signW, signH, action, hazard }
+let renderedSigns = [];     // Screen cache for hit-testing and interactive inspection
 
 function drawSignboards(signboards, floorNodes) {
   if (!building) return;
   const now = performance.now();
+  renderedSigns = [];
 
-  // If in marl_demo or random mode, update simulated neural policy outputs
-  if (signPolicy !== "dijkstra" && now - lastMarlUpdate > (signPolicy === "random" ? 1800 : 2500)) {
+  // If in random mode, update simulated exploration outputs
+  if (signPolicy === "random" && now - lastMarlUpdate > 1800) {
     lastMarlUpdate = now;
     floorNodes.forEach(u => {
       const edges = building.edges.filter(e => e.source === u.id || e.target === u.id);
-      marlDemoCache[u.id] = {};
+      randomExplorationCache[u.id] = {};
       edges.forEach(e => {
         const vId = e.source === u.id ? e.target : e.source;
-        if (signPolicy === "random") {
-          const acts = ["ARROW", "BLOCKED", "CAUTION", "ARROW"];
-          marlDemoCache[u.id][vId] = acts[Math.floor(Math.random() * acts.length)];
-        } else {
-          // MARL Demo: smart heuristic load-balancing + hazard avoidance
-          const hz = (lastState && lastState.hazards[vId]) ? lastState.hazards[vId].level : 0;
-          if (hz > 0.4) marlDemoCache[u.id][vId] = "BLOCKED";
-          else if (hz > 0.15) marlDemoCache[u.id][vId] = "CAUTION";
-          else marlDemoCache[u.id][vId] = (Math.random() > 0.35) ? "ARROW" : "NORMAL_ARROW";
-        }
+        const acts = ["ARROW", "BLOCKED", "CAUTION", "ARROW"];
+        randomExplorationCache[u.id][vId] = acts[Math.floor(Math.random() * acts.length)];
       });
     });
   }
@@ -438,17 +434,97 @@ function drawSignboards(signboards, floorNodes) {
 
       // Determine active action
       let act = sign.action;
-      if (signPolicy !== "dijkstra" && marlDemoCache[u.id] && marlDemoCache[u.id][sign.target]) {
-        act = marlDemoCache[u.id][sign.target];
+      if (signPolicy === "random" && randomExplorationCache[u.id] && randomExplorationCache[u.id][sign.target]) {
+        act = randomExplorationCache[u.id][sign.target];
       }
 
       // Dimensions (prominent and readable)
       const signW = Math.max(22, Math.min(36, 5.5 * viewScale));
       const signH = Math.max(13, Math.min(20, 3.2 * viewScale));
 
+      // Cache for mouse hit-testing & interactive inspection
+      renderedSigns.push({
+        u, v, px, py, signW, signH, angle,
+        action: act, hazard: sign.hazard
+      });
+
+      const isHovered = (hoverSign && hoverSign.u.id === u.id && hoverSign.v.id === v.id);
+      const isNodeHovered = (hoverNode === u.id);
+
+      // ── 1. Architectural Electrical Conduit connecting Node u to Signboard ──
+      const startX = sx + ux * nodeR;
+      const startY = sy + uy * nodeR;
+
+      ctx.save();
+      if (isHovered) {
+        // High-contrast electric blue laser beam connecting controller to hovered sign
+        ctx.strokeStyle = "#38bdf8";
+        ctx.lineWidth = 3.0;
+        ctx.shadowColor = "#38bdf8";
+        ctx.shadowBlur = 12;
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        ctx.lineTo(px, py);
+        ctx.stroke();
+
+        // Pulsing Controller Beacon on node u
+        ctx.beginPath();
+        ctx.arc(sx, sy, nodeR + 6 + Math.sin(now / 110) * 3, 0, Math.PI * 2);
+        ctx.strokeStyle = "#38bdf8";
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+
+        // Floating Controller Badge over node u
+        ctx.shadowBlur = 0;
+        const ctrlLabel = `CONTROLLER: ${u.id.replace(/_/g, " ").toUpperCase()}`;
+        ctx.font = "bold 9px Inter, sans-serif";
+        const tw = ctx.measureText(ctrlLabel).width;
+        ctx.fillStyle = "rgba(15, 23, 42, 0.95)";
+        ctx.strokeStyle = "#38bdf8";
+        ctx.lineWidth = 1.4;
+        if (ctx.roundRect) ctx.roundRect(sx - tw/2 - 6, sy - nodeR - 24, tw + 12, 17, 3);
+        else ctx.rect(sx - tw/2 - 6, sy - nodeR - 24, tw + 12, 17);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = "#38bdf8";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(ctrlLabel, sx, sy - nodeR - 15);
+
+      } else if (isNodeHovered) {
+        // Highlight conduit when parent node u is hovered
+        ctx.strokeStyle = "rgba(56, 189, 248, 0.85)";
+        ctx.lineWidth = 2.0;
+        ctx.setLineDash([4, 2]);
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        ctx.lineTo(px, py);
+        ctx.stroke();
+      } else {
+        // Subtle architectural wiring line
+        ctx.strokeStyle = "rgba(56, 189, 248, 0.35)";
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        ctx.lineTo(px, py);
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      // ── 2. Draw Signboard Body ──────────────────────────────────────────
       ctx.save();
       ctx.translate(px, py);
       ctx.rotate(angle);
+
+      if (isHovered) {
+        ctx.scale(1.22, 1.22);
+      }
+
+      // Mounting collar / bracket connecting conduit to sign
+      ctx.fillStyle = (isHovered || isNodeHovered) ? "#38bdf8" : "rgba(148, 163, 184, 0.8)";
+      ctx.fillRect(-signW / 2 - 3, -2.5, 3.5, 5);
 
       const drawSignBg = (bg, border, shadow, pulseAmt = 0) => {
         if (shadow) {
@@ -693,6 +769,17 @@ function drawRouteLines(agents, hazards) {
 }
 
 // ── Hover + Click ──────────────────────────────────────────────────────────────
+function getSignAtScreenPos(mx, my) {
+  for (let i = renderedSigns.length - 1; i >= 0; i--) {
+    const s = renderedSigns[i];
+    const d = Math.hypot(mx - s.px, my - s.py);
+    if (d <= Math.max(s.signW, s.signH) * 0.95) {
+      return s;
+    }
+  }
+  return null;
+}
+
 function getNodeAtScreenPos(mx, my) {
   if (!building) return null;
   const floorNodes = Object.values(building.nodes).filter(n => n.floor === currentFloor);
@@ -707,7 +794,22 @@ function getNodeAtScreenPos(mx, my) {
 
 function handleHover(e) {
   const rect = canvas.getBoundingClientRect();
-  const n = getNodeAtScreenPos(e.clientX - rect.left, e.clientY - rect.top);
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  // 1. Highest Priority: Inspect IoT Directional Signboards
+  const signHit = getSignAtScreenPos(mx, my);
+  if (signHit) {
+    hoverSign = signHit;
+    hoverNode = signHit.u.id; // Also highlights the parent controller node
+    showSignTooltip(e.clientX, e.clientY, signHit);
+    canvas.style.cursor = "pointer";
+    return;
+  }
+
+  // 2. Second Priority: Inspect Floorplan Nodes / Rooms
+  hoverSign = null;
+  const n = getNodeAtScreenPos(mx, my);
   if (n) {
     hoverNode = n.id;
     showTooltip(e.clientX, e.clientY, n);
@@ -721,7 +823,18 @@ function handleHover(e) {
 
 function handleClick(e) {
   const rect = canvas.getBoundingClientRect();
-  const n = getNodeAtScreenPos(e.clientX - rect.left, e.clientY - rect.top);
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  const signHit = getSignAtScreenPos(mx, my);
+  if (signHit) {
+    clickedNode = signHit.u.id;
+    const sel = document.getElementById("node-select");
+    if (sel) sel.value = signHit.u.id;
+    return;
+  }
+
+  const n = getNodeAtScreenPos(mx, my);
   if (n) {
     clickedNode = n.id;
     const sel = document.getElementById("node-select");
@@ -731,7 +844,69 @@ function handleClick(e) {
   }
 }
 
+function showSignTooltip(cx, cy, signItem) {
+  const u = signItem.u;
+  const v = signItem.v;
+  const act = signItem.action;
+  const hz = signItem.hazard;
+
+  document.getElementById("tt-name").textContent = `📡 IoT Signboard (Node ${u.id.replace(/_/g, " ")})`;
+  document.getElementById("tt-type").textContent = "Edge Route Actuator";
+  document.getElementById("tt-floor").textContent = `Floor ${u.floor}`;
+
+  const rowCtrl = document.getElementById("tt-row-controller");
+  const elCtrl = document.getElementById("tt-controller");
+  if (rowCtrl && elCtrl) {
+    rowCtrl.style.display = "flex";
+    elCtrl.textContent = `${u.id.replace(/_/g, " ").toUpperCase()} (Floor ${u.floor})`;
+  }
+
+  const rowTgt = document.getElementById("tt-row-target");
+  const elTgt = document.getElementById("tt-target");
+  if (rowTgt && elTgt) {
+    rowTgt.style.display = "flex";
+    elTgt.textContent = `➜ ${v.id.replace(/_/g, " ").toUpperCase()}`;
+  }
+
+  const hzEl = document.getElementById("tt-hazard");
+  hzEl.textContent = `${(hz * 100).toFixed(0)}% Downstream Corridor Hazard`;
+  hzEl.style.color = hz > 0.4 ? "var(--red)" : hz > 0.15 ? "var(--orange)" : "var(--text-muted)";
+
+  const occ = lastState
+    ? lastState.pedestrians.filter(a => a.current_node === u.id && a.floor === currentFloor).length
+    : 0;
+  document.getElementById("tt-occupancy").textContent = `${occ} persons at controller`;
+
+  const signEl = document.getElementById("tt-sign");
+  if (signEl) {
+    if (act === "ARROW") {
+      signEl.textContent = `➤ SAFE EXIT ARROW (${signPolicy === "marl" ? "ST-TBA-GAT AI" : "Dijkstra"})`;
+      signEl.style.color = "var(--green)";
+    } else if (act === "BLOCKED") {
+      signEl.textContent = "✖ CORRIDOR BLOCKED (Safety Interlock)";
+      signEl.style.color = "var(--red)";
+    } else if (act === "CAUTION") {
+      signEl.textContent = "▲ CAUTION DETOUR (Bottleneck/Smoke)";
+      signEl.style.color = "var(--yellow)";
+    } else {
+      signEl.textContent = "➤ NORMAL ARROW (Quiescent)";
+      signEl.style.color = "#38bdf8";
+    }
+  }
+
+  const rect = canvas.getBoundingClientRect();
+  tooltip.style.left = `${Math.min(cx - rect.left + 14, logicalW() - 210)}px`;
+  tooltip.style.top  = `${Math.max(10, cy - rect.top - 90)}px`;
+  tooltip.classList.add("visible");
+}
+
 function showTooltip(cx, cy, node) {
+  // Hide sign-specific rows
+  const rowCtrl = document.getElementById("tt-row-controller");
+  if (rowCtrl) rowCtrl.style.display = "none";
+  const rowTgt = document.getElementById("tt-row-target");
+  if (rowTgt) rowTgt.style.display = "none";
+
   const hz  = lastState ? (lastState.hazards[node.id] || null) : null;
   const occ = lastState
     ? lastState.pedestrians.filter(a => a.current_node === node.id && a.floor === currentFloor).length
@@ -840,6 +1015,21 @@ if (signPolicySel) {
   signPolicySel.addEventListener("change", (e) => {
     signPolicy = e.target.value;
     lastMarlUpdate = 0; // immediate update
+    const mode = signPolicy === "marl" ? "marl" : "dijkstra";
+    send({action: "set_policy_mode", mode: mode});
+    const pill = document.getElementById("policy-status-text");
+    if (pill) {
+      if (signPolicy === "marl") {
+        pill.textContent = "AI: ST-TBA-GAT ACTIVE";
+        pill.style.color = "#38bdf8";
+      } else if (signPolicy === "dijkstra") {
+        pill.textContent = "BASELINE: DIJKSTRA ACTIVE";
+        pill.style.color = "#fbbf24";
+      } else {
+        pill.textContent = "EXPLORATION: RANDOM";
+        pill.style.color = "#c084fc";
+      }
+    }
   });
 }
 

@@ -108,6 +108,13 @@ async def websocket_endpoint(ws: WebSocket):
                 sim.reset_alarm()
             elif action == "toggle_alarm":
                 sim.toggle_alarm()
+            elif action == "set_policy_mode":
+                mode = msg.get("mode", "dijkstra")
+                sim.set_policy_mode(mode)
+                await ws.send_text(json.dumps({
+                    "type": "ack_policy_mode",
+                    "mode": sim.policy_mode,
+                }))
             elif action == "inject_disaster":
                 ok = sim.inject_disaster(
                     msg.get("node_id", ""),
@@ -123,3 +130,4 @@ async def websocket_endpoint(ws: WebSocket):
 
     except WebSocketDisconnect:
         manager.disconnect(ws)
+
