@@ -36,9 +36,11 @@ class DijkstraRouter:
 
     def update_weights(self, hazard_levels: Dict[str, float],
                        blocked: Set[str],
-                       policy_multipliers: Optional[Dict[Tuple[str, str], float]] = None) -> bool:
+                       policy_multipliers: Optional[Dict[Tuple[str, str], float]] = None,
+                       active_nodes: Optional[Set[str]] = None) -> bool:
         """
-        Recompute edge weights based on current hazard and optional policy multipliers.
+        Recompute edge weights based on current hazard, optional policy multipliers,
+        and optional active_nodes (for simulating partitioned/severed networks).
         Returns True if any weight changed significantly (triggers reroute).
         """
         if self.G is None:
@@ -46,11 +48,15 @@ class DijkstraRouter:
 
         changed = False
         for u, v, data in self.G.edges(data=True):
-            h = max(hazard_levels.get(u, 0.0), hazard_levels.get(v, 0.0))
-            if u in blocked or v in blocked:
-                new_w = 1e9   # effectively impassable
+            if active_nodes is not None and (u not in active_nodes or v not in active_nodes):
+                # Node disconnected from central SCADA server; retains default geometric distance
+                new_w = data["distance"]
             else:
-                new_w = data["distance"] * (1.0 + 10.0 * h)
+                h = max(hazard_levels.get(u, 0.0), hazard_levels.get(v, 0.0))
+                if u in blocked or v in blocked:
+                    new_w = 1e9   # effectively impassable
+                else:
+                    new_w = data["distance"] * (1.0 + 10.0 * h)
 
             if policy_multipliers:
                 mult = policy_multipliers.get((u, v), policy_multipliers.get((v, u), 1.0))

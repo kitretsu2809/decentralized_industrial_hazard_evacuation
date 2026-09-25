@@ -67,7 +67,7 @@ class Simulation:
         for nid in self.node_positions:
             adj_with_dist.setdefault(nid, [])
 
-        self.hazard  = HazardModel(adj_with_dist)
+        self.hazard  = HazardModel(adj_with_dist, exits=self.exits)
         self.router  = DijkstraRouter()
         self.router.build(self.edge_list, self.exits, self.node_floors)
         self.sfm     = SocialForceModel(self.node_positions, self.node_floors, self.edge_list)
@@ -84,6 +84,7 @@ class Simulation:
 
         self.policy_mode: str = "dijkstra"  # "dijkstra" | "marl" | "static"
         self.policy_multipliers: Dict[Tuple[str, str], float] = {}
+        self.active_comm_nodes: Optional[Set[str]] = None
         self.policy_model = None
         self._policy_edge_index = None
         self._policy_hidden = None
@@ -176,8 +177,14 @@ class Simulation:
             self.trigger_alarm()
 
     def inject_disaster(self, node_id, htype_str, intensity):
-        try:    htype = HazardType(htype_str)
-        except: return False
+        from .hazard_model import HAZARD_ALIASES
+        if isinstance(htype_str, str):
+            htype = HAZARD_ALIASES.get(htype_str.upper(), None)
+            if htype is None:
+                try:    htype = HazardType(htype_str)
+                except: htype = HazardType.GAS_RELEASE
+        else:
+            htype = htype_str
         if node_id not in self.node_positions: return False
         self.hazard.inject(node_id, htype, min(1.0, max(0.0, intensity)))
         # Automatically trigger facility evacuation alarm upon hazard injection
@@ -225,7 +232,9 @@ class Simulation:
                 self.hazard.levels, self.hazard.blocked, self.policy_multipliers
             )
         else:
-            self.router.update_weights(self.hazard.levels, self.hazard.blocked)
+            self.router.update_weights(
+                self.hazard.levels, self.hazard.blocked, active_nodes=self.active_comm_nodes
+            )
 
         if self.t - self._last_reroute >= 3.0:
             self._reroute_all()

@@ -15,21 +15,28 @@ class HazardType(str, Enum):
     EXPLOSION      = "EXPLOSION"
     CHEMICAL_SPILL = "CHEMICAL_SPILL"
 
+HAZARD_ALIASES: Dict[str, HazardType] = {
+    "THERMAL_FIRE": HazardType.FIRE,
+    "FIRE": HazardType.FIRE,
+    "GAS_RELEASE": HazardType.GAS_RELEASE,
+    "TOXIC_PLUME": HazardType.GAS_RELEASE,
+    "EXPLOSION": HazardType.EXPLOSION,
+    "CHEMICAL_SPILL": HazardType.CHEMICAL_SPILL,
+}
+
 # Spread rates are per-second to an immediate neighbour at 0 m (attenuated by distance)
 _PARAMS = {
-    HazardType.GAS_RELEASE:    {"rate": 0.06,  "decay": 0.003, "color": "#f97316", "rgb": (249,115,22)},
-    HazardType.FIRE:           {"rate": 0.09,  "decay": 0.001, "color": "#ef4444", "rgb": (239,68,68)},
-    HazardType.EXPLOSION:      {"rate": 0.35,  "decay": 0.008, "color": "#dc2626", "rgb": (220,38,38)},
+    HazardType.GAS_RELEASE:    {"rate": 0.05,  "decay": 0.003, "color": "#f97316", "rgb": (249,115,22)},
+    HazardType.FIRE:           {"rate": 0.06,  "decay": 0.001, "color": "#ef4444", "rgb": (239,68,68)},
+    HazardType.EXPLOSION:      {"rate": 0.25,  "decay": 0.008, "color": "#dc2626", "rgb": (220,38,38)},
     HazardType.CHEMICAL_SPILL: {"rate": 0.04,  "decay": 0.002, "color": "#a855f7", "rgb": (168,85,247)},
 }
 
 # Characteristic distance for attenuation: exp(-d / CHAR_DIST)
-# At 20m: factor = exp(-20/40) = 0.61  — still significant
-# At 60m: factor = exp(-60/40) = 0.22  — minimal
-CHAR_DIST        = 40.0   # metres
+CHAR_DIST        = 35.0   # metres
 BLOCKED_THRESHOLD = 0.80
 DANGER_THRESHOLD  = 0.30
-LETHAL_THRESHOLD  = 0.88
+LETHAL_THRESHOLD  = 0.80
 
 
 @dataclass
@@ -44,16 +51,19 @@ class HazardModel:
     """
     adjacency: {node_id: [(neighbour_id, distance_m), ...]}
     """
-    def __init__(self, adjacency: Dict[str, List[Tuple[str, float]]]):
+    def __init__(self, adjacency: Dict[str, List[Tuple[str, float]]], exits: Optional[List[str]] = None):
         self.adjacency = adjacency
+        self.exits: Set[str]                      = set(exits or [])
         self.levels: Dict[str, float]             = {n: 0.0 for n in adjacency}
         self.types:  Dict[str, Optional[HazardType]] = {n: None for n in adjacency}
         self.sources: List[HazardSource] = []
         self.blocked: Set[str] = set()
 
-    def inject(self, node_id: str, htype: HazardType, intensity: float,
+    def inject(self, node_id: str, htype: Any, intensity: float,
                sustained: bool = True) -> None:
         if node_id not in self.levels: return
+        if isinstance(htype, str):
+            htype = HAZARD_ALIASES.get(htype.upper(), HazardType.GAS_RELEASE)
         self.levels[node_id] = min(1.0, intensity)
         self.types[node_id]  = htype
         # Replace existing source for same node
@@ -72,7 +82,7 @@ class HazardModel:
                 if self.types[src.node_id] is None:
                     self.types[src.node_id] = src.htype
 
-        # Diffuse to immediate neighbours only (multi-hop happens naturally over time)
+        # Physical gradient-driven diffusion to immediate neighbours
         for node, level in self.levels.items():
             if level < 0.01: continue
             htype = self.types[node]
@@ -80,11 +90,18 @@ class HazardModel:
             rate = _PARAMS[htype]["rate"]
 
             for neighbour, edge_dist in self.adjacency.get(node, []):
-                # Distance attenuation: exp(-d / CHAR_DIST)
+                # Outdoor muster exits do not accumulate indoor plume
+                if neighbour in self.exits:
+                    continue
+
+                grad = max(0.0, level - self.levels[neighbour])
+                if grad <= 0.001:
+                    continue
+
                 attenuation = math.exp(-edge_dist / CHAR_DIST)
-                delta = rate * level * dt * attenuation * (1.0 - new_levels[neighbour])
+                delta = rate * grad * dt * attenuation
                 if delta > 0.0001:
-                    new_levels[neighbour] = min(1.0, new_levels[neighbour] + delta)
+                    new_levels[neighbour] = min(0.98, new_levels[neighbour] + delta)
                     if self.types.get(neighbour) is None:
                         self.types[neighbour] = htype
 
