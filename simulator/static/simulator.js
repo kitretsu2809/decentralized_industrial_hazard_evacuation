@@ -194,6 +194,32 @@ function handleMessage(msg) {
     lastState   = msg;
     updateMetrics(msg.metrics);
     updateSpeedDisplay(msg.speed);
+    if (msg.alarm_active !== undefined) {
+      updateAlarmStatus(msg.alarm_active);
+    }
+  }
+}
+
+function updateAlarmStatus(alarmActive) {
+  const pill = document.getElementById("facility-status");
+  const txt  = document.getElementById("facility-status-text");
+  const btn  = document.getElementById("btn-alarm");
+  if (!pill) return;
+
+  if (alarmActive) {
+    pill.className = "status-pill alarm";
+    if (txt) txt.textContent = "🚨 EMERGENCY EVACUATION ALARM ACTIVE";
+    if (btn) {
+      btn.className = "btn-alarm active";
+      btn.textContent = "⏹ CANCEL / RESET ALARM";
+    }
+  } else {
+    pill.className = "status-pill normal";
+    if (txt) txt.textContent = "FACILITY: NORMAL OPERATION";
+    if (btn) {
+      btn.className = "btn-alarm";
+      btn.textContent = "🚨 SOUND EMERGENCY ALARM";
+    }
   }
 }
 
@@ -398,6 +424,20 @@ function drawAgents(agents, prevAgents, alpha) {
     const [cx, cy] = toScreen(rx, ry);
     const r = Math.max(3, 4.0 * Math.min(1.4, viewScale / 3.0));
 
+    // Normal state: subtle workstation aura ring
+    if (a.state === "normal") {
+      ctx.beginPath(); ctx.arc(cx, cy, r + 3, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(56,189,248,0.12)"; ctx.fill();
+    }
+
+    // Reacting state: alerted pulsing ring
+    if (a.state === "reacting") {
+      const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 250);
+      ctx.beginPath(); ctx.arc(cx, cy, r + 4 * pulse + 1, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(245,158,11,0.25)"; ctx.fill();
+      ctx.strokeStyle = "rgba(245,158,11,0.6)"; ctx.lineWidth = 1; ctx.stroke();
+    }
+
     // Danger pulse ring
     if (a.state === "danger") {
       const pulse = 0.4 + 0.6 * Math.abs(Math.sin(performance.now() / 350));
@@ -419,7 +459,8 @@ function drawAgents(agents, prevAgents, alpha) {
 function drawRouteLines(agents, hazards) {
   if (!agents || !building) return;
   agents.forEach(a => {
-    if (a.state === "evacuated" || a.state === "casualty") return;
+    // Do not draw exit routes for stationed/normal workers or casualties/evacuated
+    if (a.state === "normal" || a.state === "reacting" || a.state === "evacuated" || a.state === "casualty") return;
     if (!a.path || !a.path.length || a.floor !== currentFloor) return;
     const nNode = building.nodes[a.path[0]];
     if (!nNode) return;
@@ -509,8 +550,9 @@ function populateNodeSelect() {
 // ── Metrics ────────────────────────────────────────────────────────────────────
 function updateMetrics(m) {
   if (!m) return;
+  setText("m-normal",     m.normal     ?? "—");
+  setText("m-reacting",   m.reacting   ?? "—");
   setText("m-moving",     m.moving     ?? "—");
-  setText("m-rerouting",  m.rerouting  ?? "—");
   setText("m-danger",     m.in_danger  ?? "—");
   setText("m-evacuated",  m.evacuated  ?? "—");
   setText("m-casualties", m.casualties ?? "—");
@@ -545,6 +587,11 @@ document.getElementById("btn-reset").addEventListener("click", () => {
   send({action:"reset", num_evacuees:n});
   fitBuilding(true);
 });
+
+const btnAlarm = document.getElementById("btn-alarm");
+if (btnAlarm) {
+  btnAlarm.addEventListener("click", () => send({action:"toggle_alarm"}));
+}
 
 const speedSlider = document.getElementById("speed-slider");
 speedSlider.addEventListener("input", () => {

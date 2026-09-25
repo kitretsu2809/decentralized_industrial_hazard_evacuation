@@ -12,7 +12,9 @@ from typing import List, Optional, Tuple
 
 
 class PedestrianState(str, Enum):
-    MOVING    = "moving"    # Following Dijkstra path safely
+    NORMAL    = "normal"    # On duty / dwelling at workstation
+    REACTING  = "reacting"  # Alarm recognized, hesitation / reaction delay (ISO 16738)
+    MOVING    = "moving"    # Evacuating along safe Dijkstra path
     REROUTING = "rerouting" # Blocked path, recalculating
     DANGER    = "danger"    # In a hazardous zone
     EVACUATED = "evacuated" # Reached an exit
@@ -27,22 +29,32 @@ class Pedestrian:
     floor: int = 1
     vx: float = 0.0              # velocity m/s
     vy: float = 0.0
-    state: PedestrianState = PedestrianState.MOVING
+    state: PedestrianState = PedestrianState.NORMAL
     path: List[str] = field(default_factory=list)   # remaining node waypoints
     current_node: str = ""       # node the agent is currently at / last passed
     target_node: str = ""        # immediate next node
-    desired_speed: float = 1.4   # free-flow speed m/s  (Weidmann 1992)
+    desired_speed: float = 1.34  # free-flow egress speed m/s (Weidmann 1992)
     reroute_cooldown: float = 0.0
     age: float = 0.0             # simulation time this agent has existed
+
+    # Pre-evacuation & anchor tracking
+    anchor_x: float = 0.0        # workstation anchor x
+    anchor_y: float = 0.0        # workstation anchor y
+    reaction_delay: float = 0.0  # pre-movement delay seconds (ISO/TR 16738)
+    wander_target_x: float = 0.0 # micro-patrol target
+    wander_target_y: float = 0.0
+    wander_timer: float = 0.0
 
     # ── Rendering helpers ────────────────────────────────────────────────────
     def color(self) -> str:
         return {
-            PedestrianState.MOVING:    "#22c55e",   # green
-            PedestrianState.REROUTING: "#eab308",   # yellow
-            PedestrianState.DANGER:    "#ef4444",   # red
-            PedestrianState.EVACUATED: "#94a3b8",   # slate (fades out)
-            PedestrianState.CASUALTY:  "#1e293b",   # dark (dead)
+            PedestrianState.NORMAL:    "#38bdf8",   # calm cyan/blue (working at station)
+            PedestrianState.REACTING:  "#f59e0b",   # amber (alerted, hesitating)
+            PedestrianState.MOVING:    "#22c55e",   # green (evacuating)
+            PedestrianState.REROUTING: "#eab308",   # yellow (rerouting)
+            PedestrianState.DANGER:    "#ef4444",   # red (in hazard)
+            PedestrianState.EVACUATED: "#94a3b8",   # slate (fade out at exit)
+            PedestrianState.CASUALTY:  "#1e293b",   # dark (overcome)
         }[self.state]
 
     def to_dict(self) -> dict:
@@ -81,13 +93,19 @@ def spawn_pedestrians(n: int, node_positions: dict, node_floors: dict,
     for i in range(n):
         node = random.choice(eligible)
         x, y = node_positions[node]
-        # Scatter slightly within the node area (±2 m)
+        # Scatter slightly within the room / node area (±2 m)
         x += random.uniform(-2.0, 2.0)
         y += random.uniform(-2.0, 2.0)
         agents.append(Pedestrian(
             id=i, x=x, y=y,
             floor=node_floors.get(node, 1),
             current_node=node,
-            desired_speed=random.gauss(1.34, 0.26),  # Weidmann distribution
+            state=PedestrianState.NORMAL,
+            desired_speed=max(0.9, random.gauss(1.34, 0.22)),  # Weidmann distribution
+            anchor_x=x,
+            anchor_y=y,
+            wander_target_x=x + random.uniform(-1.0, 1.0),
+            wander_target_y=y + random.uniform(-1.0, 1.0),
+            reaction_delay=random.uniform(1.2, 3.5),  # ISO/TR 16738 recognition delay
         ))
     return agents

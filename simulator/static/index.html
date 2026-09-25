@@ -18,6 +18,13 @@
     </div>
   </div>
 
+  <div class="header-center">
+    <div class="status-pill normal" id="facility-status">
+      <span class="status-dot"></span>
+      <span id="facility-status-text">FACILITY: NORMAL OPERATION</span>
+    </div>
+  </div>
+
   <div class="floor-tabs">
     <button class="floor-tab active" data-floor="1">Floor 1</button>
     <button class="floor-tab"        data-floor="2">Floor 2</button>
@@ -51,8 +58,9 @@
 
     <!-- Legend -->
     <div class="canvas-overlay">
-      <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div>Moving</div>
-      <div class="legend-item"><div class="legend-dot" style="background:#eab308"></div>Rerouting</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#38bdf8"></div>At Station (Normal)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div>Reacting (Delay)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div>Evacuating</div>
       <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div>In Danger</div>
       <div class="legend-item"><div class="legend-dot" style="background:#94a3b8"></div>Evacuated</div>
       <div class="legend-item"><div class="legend-dot" style="background:#22c55e;opacity:0.4;border:1px solid #22c55e"></div>Exit</div>
@@ -64,19 +72,22 @@
 
     <!-- Simulation Controls -->
     <div class="panel">
-      <div class="panel-title">Simulation</div>
+      <div class="panel-title">Facility Control</div>
       <div class="btn-row">
         <button class="btn primary" id="btn-play">▶ Play</button>
         <button class="btn"         id="btn-pause">⏸ Pause</button>
         <button class="btn"         id="btn-reset">↺ Reset</button>
       </div>
-      <div class="control-row">
+
+      <button class="btn-alarm" id="btn-alarm">🚨 SOUND EMERGENCY ALARM</button>
+
+      <div class="control-row" style="margin-top:10px">
         <span class="control-label">Speed</span>
         <input id="speed-slider" type="range" min="0.5" max="8" step="0.5" value="2">
         <span class="control-val" id="speed-val">2.0×</span>
       </div>
       <div class="control-row">
-        <span class="control-label">Evacuees</span>
+        <span class="control-label">Personnel</span>
         <input id="evacuee-count" type="number" min="5" max="200" value="60">
         <span style="font-size:0.65rem;color:var(--text-muted)">(on reset)</span>
       </div>
@@ -84,7 +95,7 @@
 
     <!-- Disaster Injection -->
     <div class="panel">
-      <div class="panel-title">Inject Disaster</div>
+      <div class="panel-title">Inject Hazard</div>
       <select id="node-select"><option>Loading…</option></select>
       <select id="hazard-type">
         <option value="GAS_RELEASE">💨 Gas Release</option>
@@ -97,35 +108,39 @@
         <input id="intensity-slider" type="range" min="0.3" max="1.0" step="0.05" value="0.75">
         <span class="control-val" id="intensity-val">0.75</span>
       </div>
-      <button class="inject-btn" id="btn-inject">💥 Inject</button>
+      <button class="inject-btn" id="btn-inject">💥 Inject Hazard</button>
       <div class="inject-ack" id="inject-ack"></div>
       <div style="font-size:0.68rem;color:var(--text-muted);margin-top:6px">
-        Click a node on the canvas to select it here
+        Tip: Click any room on the canvas to target it
       </div>
     </div>
 
     <!-- Live Metrics -->
     <div class="panel">
-      <div class="panel-title">Live Metrics</div>
+      <div class="panel-title">Live Occupancy & Egress</div>
       <div class="metric-grid">
         <div class="metric-card">
-          <div class="metric-label">Moving</div>
-          <div class="metric-value green" id="m-moving">—</div>
+          <div class="metric-label">At Station</div>
+          <div class="metric-value" style="color:#38bdf8" id="m-normal">—</div>
         </div>
         <div class="metric-card">
-          <div class="metric-label">Rerouting</div>
-          <div class="metric-value yellow" id="m-rerouting">—</div>
+          <div class="metric-label">Reacting</div>
+          <div class="metric-value yellow" id="m-reacting">—</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Evacuating</div>
+          <div class="metric-value green" id="m-moving">—</div>
         </div>
         <div class="metric-card">
           <div class="metric-label">In Danger</div>
           <div class="metric-value red" id="m-danger">—</div>
         </div>
+      </div>
+      <div class="metric-grid" style="margin-top:8px">
         <div class="metric-card">
           <div class="metric-label">Evacuated</div>
           <div class="metric-value accent" id="m-evacuated">—</div>
         </div>
-      </div>
-      <div class="metric-grid" style="margin-top:8px">
         <div class="metric-card">
           <div class="metric-label">Casualties</div>
           <div class="metric-value red" id="m-casualties">—</div>
@@ -138,10 +153,10 @@
     </div>
 
     <div class="sidebar-footer">
-      <strong>Routing:</strong> Dijkstra · hazard-weighted edges<br>
+      <strong>Normal State:</strong> Workers dwell at workstations (no premature egress)<br>
+      <strong>Emergency State:</strong> Alarm/hazard triggers pre-movement hesitation delay ($\tau \sim 1\text{--}3\text{s}$) followed by Dijkstra routing<br>
       <strong>Physics:</strong> Helbing Social Force Model (1995)<br>
-      <strong>Hazard:</strong> Distance-attenuated diffusion<br>
-      <em>Phase 1 Baseline</em> — next phase: MARL ST-TBA-GAT trained on this simulator.
+      <em>Phase 1 Baseline</em> — benchmark environment for MARL training.
     </div>
 
   </div>

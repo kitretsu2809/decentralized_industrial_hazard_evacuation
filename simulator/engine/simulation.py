@@ -75,6 +75,7 @@ class Simulation:
         self.agents: List[Pedestrian] = []
         self.t: float        = 0.0
         self.running: bool   = True   # auto-start
+        self.alarm_active: bool = False  # Facility operating normally by default
         self.speed: float    = 2.0    # 2× default so movement is clearly visible
         self.num_evacuees: int = 60
         self._last_reroute: float = 0.0
@@ -93,6 +94,7 @@ class Simulation:
         self.t = 0.0
         self._accumulator = 0.0
         self._last_reroute = 0.0
+        self.alarm_active = False
         self.hazard.reset()
         self.router.update_weights({}, set())
         self._init_agents()
@@ -100,11 +102,35 @@ class Simulation:
 
     def set_speed(self, speed): self.speed = max(0.1, min(10.0, speed))
 
+    def trigger_alarm(self):
+        """Sound the facility-wide evacuation alarm (initiates egress reaction)."""
+        self.alarm_active = True
+        for agent in self.agents:
+            if agent.state == PedestrianState.NORMAL:
+                agent.state = PedestrianState.REACTING
+
+    def reset_alarm(self):
+        """Cancel alarm and return safe workers to workstation duty."""
+        self.alarm_active = False
+        for agent in self.agents:
+            if agent.state in (PedestrianState.REACTING, PedestrianState.MOVING, PedestrianState.REROUTING):
+                agent.state = PedestrianState.NORMAL
+                agent.path = []
+                agent.vx = agent.vy = 0.0
+
+    def toggle_alarm(self):
+        if self.alarm_active:
+            self.reset_alarm()
+        else:
+            self.trigger_alarm()
+
     def inject_disaster(self, node_id, htype_str, intensity):
         try:    htype = HazardType(htype_str)
         except: return False
         if node_id not in self.node_positions: return False
         self.hazard.inject(node_id, htype, min(1.0, max(0.0, intensity)))
+        # Automatically trigger facility evacuation alarm upon hazard injection
+        self.trigger_alarm()
         self._reroute_all(force=True)
         return True
 
@@ -152,7 +178,8 @@ class Simulation:
 
     def _reroute_all(self, force=False):
         for agent in self.agents:
-            if agent.state in (PedestrianState.EVACUATED, PedestrianState.CASUALTY):
+            if agent.state in (PedestrianState.NORMAL, PedestrianState.REACTING,
+                               PedestrianState.EVACUATED, PedestrianState.CASUALTY):
                 continue
             needs = (
                 force
@@ -168,65 +195,100 @@ class Simulation:
                     agent.path = new_path[1:]
                     if agent.state == PedestrianState.MOVING:
                         agent.state = PedestrianState.REROUTING
-                    # Snap back to moving after brief rerouting visual
-                    self.t  # just to reference self
 
     def _update_states(self):
         for agent in self.agents:
             if agent.state in (PedestrianState.EVACUATED, PedestrianState.CASUALTY):
                 continue
+
+            h = self.hazard.levels.get(agent.current_node, 0.0)
+
+            # 1. Casualty check
+            if h >= LETHAL_THRESHOLD:
+                agent.state = PedestrianState.CASUALTY
+                agent.vx = agent.vy = 0.0
+                agent.path = []
+                continue
+
+            # 2. Reached exit check
             if agent.current_node in self.exits:
                 agent.state = PedestrianState.EVACUATED
                 agent.vx = agent.vy = 0.0
                 agent.path = []
                 continue
-            h = self.hazard.levels.get(agent.current_node, 0.0)
-            if h >= LETHAL_THRESHOLD:
-                agent.state = PedestrianState.CASUALTY
-                agent.vx = agent.vy = 0.0
-                agent.path = []
-            elif h >= DANGER_THRESHOLD:
+
+            # 3. Danger override: if local hazard threatens room, react immediately
+            if h >= DANGER_THRESHOLD:
                 agent.state = PedestrianState.DANGER
-            elif agent.state == PedestrianState.DANGER:
-                agent.state = PedestrianState.MOVING
-            elif agent.state == PedestrianState.REROUTING and agent.path:
-                agent.state = PedestrianState.MOVING
-            if not agent.path and agent.state not in (
-                    PedestrianState.EVACUATED, PedestrianState.CASUALTY):
-                src = agent.current_node or _nearest_node(
-                    agent.x, agent.y, self.node_positions, agent.floor)
-                p = self.router.get_path(src, agent.floor)
-                if p: agent.path = p[1:]
+                if not agent.path or self.router.is_blocked_path(agent.path, self.hazard.blocked):
+                    src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, agent.floor)
+                    p = self.router.get_path(src, agent.floor)
+                    if p: agent.path = p[1:]
+                continue
+
+            # 4. Normal Operating Regime (No alarm active, safe room)
+            if not self.alarm_active and h < 0.15:
+                if agent.state != PedestrianState.NORMAL:
+                    agent.state = PedestrianState.NORMAL
+                    agent.path = []
+                    agent.vx = agent.vy = 0.0
+                continue
+
+            # 5. Emergency Alarm Transition (Alarm active or hazard nearby)
+            if agent.state == PedestrianState.NORMAL:
+                agent.state = PedestrianState.REACTING
+
+            if agent.state == PedestrianState.REACTING:
+                agent.reaction_delay -= self.DT
+                if agent.reaction_delay <= 0.0:
+                    agent.state = PedestrianState.MOVING
+                    # Compute safe egress path now that worker has reacted
+                    src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, agent.floor)
+                    p = self.router.get_path(src, agent.floor)
+                    if p: agent.path = p[1:]
+
+            elif agent.state in (PedestrianState.MOVING, PedestrianState.REROUTING):
+                if not agent.path:
+                    src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, agent.floor)
+                    p = self.router.get_path(src, agent.floor)
+                    if p: agent.path = p[1:]
+                if agent.state == PedestrianState.REROUTING and agent.path:
+                    agent.state = PedestrianState.MOVING
 
     def _init_agents(self):
         self.agents = spawn_pedestrians(
             self.num_evacuees, self.node_positions, self.node_floors)
+        # Workers begin in NORMAL operating state dwelling at their stations (no exit paths initially)
         for agent in self.agents:
-            p = self.router.get_path(agent.current_node, agent.floor)
-            agent.path = p[1:] if p else []
+            agent.state = PedestrianState.NORMAL
+            agent.path = []
 
     # ── Serialisation ─────────────────────────────────────────────────────────
     def state_dict(self):
         return {
-            "t":           round(self.t, 1),
-            "running":     self.running,
-            "speed":       self.speed,
-            "pedestrians": [a.to_dict() for a in self.agents],
-            "hazards":     self.hazard.to_dict(),
-            "metrics":     self.metrics(),
+            "t":            round(self.t, 1),
+            "running":      self.running,
+            "alarm_active": self.alarm_active,
+            "speed":        self.speed,
+            "pedestrians":  [a.to_dict() for a in self.agents],
+            "hazards":      self.hazard.to_dict(),
+            "metrics":      self.metrics(),
         }
 
     def metrics(self):
         counts = {s: 0 for s in PedestrianState}
         for a in self.agents: counts[a.state] += 1
         return {
-            "total":      len(self.agents),
-            "moving":     counts[PedestrianState.MOVING],
-            "rerouting":  counts[PedestrianState.REROUTING],
-            "in_danger":  counts[PedestrianState.DANGER],
-            "evacuated":  counts[PedestrianState.EVACUATED],
-            "casualties": counts[PedestrianState.CASUALTY],
-            "sim_time":   round(self.t, 1),
+            "total":        len(self.agents),
+            "normal":       counts[PedestrianState.NORMAL],
+            "reacting":     counts[PedestrianState.REACTING],
+            "moving":       counts[PedestrianState.MOVING],
+            "rerouting":    counts[PedestrianState.REROUTING],
+            "in_danger":    counts[PedestrianState.DANGER],
+            "evacuated":    counts[PedestrianState.EVACUATED],
+            "casualties":   counts[PedestrianState.CASUALTY],
+            "alarm_active": self.alarm_active,
+            "sim_time":     round(self.t, 1),
         }
 
     def building_dict(self):

@@ -102,6 +102,12 @@ async def websocket_endpoint(ws: WebSocket):
                 sim.set_speed(float(msg.get("speed", 1.0)))
             elif action == "set_evacuees":
                 sim.num_evacuees = int(msg.get("count", 60))
+            elif action == "trigger_alarm":
+                sim.trigger_alarm()
+            elif action == "reset_alarm":
+                sim.reset_alarm()
+            elif action == "toggle_alarm":
+                sim.toggle_alarm()
             elif action == "inject_disaster":
                 ok = sim.inject_disaster(
                     msg.get("node_id", ""),

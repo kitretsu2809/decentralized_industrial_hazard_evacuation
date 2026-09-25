@@ -38,7 +38,7 @@ class SocialForceModel:
 
     def step(self, agents: List, hazard_levels: Dict[str, float],
              blocked: set, dt: float) -> None:
-        active = [a for a in agents if a.state.value in ("moving", "rerouting", "danger")]
+        active = [a for a in agents if a.state.value in ("normal", "reacting", "moving", "rerouting", "danger")]
         if not active:
             return
 
@@ -52,60 +52,92 @@ class SocialForceModel:
         fx = np.zeros(n, dtype=np.float64)
         fy = np.zeros(n, dtype=np.float64)
 
+        import random
+
         for i, agent in enumerate(active):
-            # ── Waypoint check ────────────────────────────────────────────────
-            if not agent.path:
-                continue
-            target_id = agent.path[0]
-            if target_id not in self.node_positions:
-                agent.path = agent.path[1:]
-                continue
+            # ── Normal State: Dwelling / Micro-movement at Workstation ────────
+            if agent.state.value == "normal":
+                agent.wander_timer -= dt
+                dist_to_wander = math.hypot(agent.wander_target_x - px[i], agent.wander_target_y - py[i])
+                if agent.wander_timer <= 0.0 or dist_to_wander < 0.25:
+                    agent.wander_timer = random.uniform(3.0, 7.0)
+                    # Gentle roaming around anchor workstation (radius ~1.5m)
+                    ang = random.uniform(0, 2 * math.pi)
+                    rad = random.uniform(0.2, 1.8)
+                    agent.wander_target_x = agent.anchor_x + rad * math.cos(ang)
+                    agent.wander_target_y = agent.anchor_y + rad * math.sin(ang)
 
-            tx_, ty_ = self.node_positions[target_id]
+                dx_ = agent.wander_target_x - px[i]
+                dy_ = agent.wander_target_y - py[i]
+                dist = math.hypot(dx_, dy_)
+                if dist > 0.1:
+                    v_slow = min(0.35, dist * 0.4)
+                    e_x, e_y = dx_ / dist, dy_ / dist
+                    fx[i] += MASS * (e_x * v_slow - vx[i]) / TAU
+                    fy[i] += MASS * (e_y * v_slow - vy[i]) / TAU
+                else:
+                    fx[i] += MASS * (0.0 - vx[i]) / TAU
+                    fy[i] += MASS * (0.0 - vy[i]) / TAU
 
-            # Arrive at waypoint
-            if math.hypot(tx_ - px[i], ty_ - py[i]) < 2.5:
-                agent.current_node = target_id
-                agent.path = agent.path[1:]
+            # ── Reacting State: Recognition Hesitation ────────────────────────
+            elif agent.state.value == "reacting":
+                # Decelerate to pause as the emergency alarm sounds
+                fx[i] += MASS * (0.0 - vx[i]) / (TAU * 0.5)
+                fy[i] += MASS * (0.0 - vy[i]) / (TAU * 0.5)
+
+            # ── Evacuation States: MOVING / REROUTING / DANGER ─────────────────
+            else:
                 if not agent.path:
-                    continue
-                target_id = agent.path[0]
-                tx_, ty_ = self.node_positions.get(target_id, (px[i], py[i]))
+                    fx[i] += MASS * (0.0 - vx[i]) / TAU
+                    fy[i] += MASS * (0.0 - vy[i]) / TAU
+                else:
+                    target_id = agent.path[0]
+                    if target_id not in self.node_positions:
+                        agent.path = agent.path[1:]
+                        continue
 
-            dx_, dy_ = tx_ - px[i], ty_ - py[i]
-            dist = math.hypot(dx_, dy_)
-            if dist < 0.01:
-                continue
+                    tx_, ty_ = self.node_positions[target_id]
 
-            # ── Local density for Weidmann correction ─────────────────────────
-            diff_sq = (px - px[i])**2 + (py - py[i])**2
-            local_count = float(np.sum(diff_sq < 9.0) - 1)   # within 3 m radius
-            local_density = local_count / (math.pi * 9.0)
-            v_des = weidmann_speed(agent.desired_speed, local_density)
+                    # Arrive at waypoint
+                    if math.hypot(tx_ - px[i], ty_ - py[i]) < 2.5:
+                        agent.current_node = target_id
+                        agent.path = agent.path[1:]
+                        if not agent.path:
+                            continue
+                        target_id = agent.path[0]
+                        tx_, ty_ = self.node_positions.get(target_id, (px[i], py[i]))
 
-            # ── Goal force ───────────────────────────────────────────────────
-            e_x, e_y = dx_ / dist, dy_ / dist
-            g_x = MASS * (e_x * v_des - vx[i]) / TAU
-            g_y = MASS * (e_y * v_des - vy[i]) / TAU
-            fx[i] += g_x
-            fy[i] += g_y
+                    dx_, dy_ = tx_ - px[i], ty_ - py[i]
+                    dist = math.hypot(dx_, dy_)
+                    if dist >= 0.01:
+                        # Local density for Weidmann correction
+                        diff_sq = (px - px[i])**2 + (py - py[i])**2
+                        local_count = float(np.sum(diff_sq < 9.0) - 1)
+                        local_density = local_count / (math.pi * 9.0)
+                        v_des = weidmann_speed(agent.desired_speed, local_density)
 
-            # ── Agent repulsion ───────────────────────────────────────────────
+                        e_x, e_y = dx_ / dist, dy_ / dist
+                        g_x = MASS * (e_x * v_des - vx[i]) / TAU
+                        g_y = MASS * (e_y * v_des - vy[i]) / TAU
+                        fx[i] += g_x
+                        fy[i] += g_y
+
+            # ── Agent Mutual Repulsion ────────────────────────────────────────
             for j in range(n):
                 if j == i or active[j].floor != agent.floor:
                     continue
                 ddx, ddy = px[i] - px[j], py[i] - py[j]
                 d = math.hypot(ddx, ddy)
-                if d < 0.01 or d > 5.0:
+                if d < 0.01 or d > 4.0:
                     continue
                 r_ij = R_AGENT * 2
                 mag = A_REPULSE * math.exp((r_ij - d) / B_REPULSE)
                 fx[i] += mag * ddx / d
                 fy[i] += mag * ddy / d
 
-            # ── Hazard flee force ─────────────────────────────────────────────
+            # ── Hazard flee force (if in hazardous zone) ──────────────────────
             h = hazard_levels.get(agent.current_node, 0.0)
-            if h > 0.1:
+            if h > 0.05:
                 hx_, hy_ = self.node_positions.get(agent.current_node, (px[i], py[i]))
                 ddx_, ddy_ = px[i] - hx_, py[i] - hy_
                 dd_ = math.hypot(ddx_, ddy_)
