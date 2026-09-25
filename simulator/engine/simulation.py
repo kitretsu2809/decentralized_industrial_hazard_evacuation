@@ -264,6 +264,74 @@ class Simulation:
             agent.path = []
 
     # ── Serialisation ─────────────────────────────────────────────────────────
+    def compute_signboards(self) -> Dict[str, List[Dict]]:
+        """
+        Computes the dynamic directional signage state for each edge router node.
+        This provides the classical baseline actions:
+          - 'ARROW': Designated safe egress path to nearest exit (Green Arrow)
+          - 'BLOCKED': Hazard level >= 0.80 or node blocked (Red X)
+          - 'CAUTION': Hazard level >= 0.30 (Amber warning detour)
+          - 'NORMAL_ARROW': Low-hazard quiescent exit indicator
+          - 'NORMAL': Low-hazard corridor in standby
+        """
+        if self.router.G is None:
+            return {}
+
+        import networkx as nx
+        adj = {}
+        for s, t, d, w in self.edge_list:
+            adj.setdefault(s, set()).add(t)
+            adj.setdefault(t, set()).add(s)
+
+        try:
+            exit_paths = nx.multi_source_dijkstra_path(
+                self.router.G, self.exits, weight="weight"
+            )
+        except Exception:
+            exit_paths = {}
+
+        signboards: Dict[str, List[Dict]] = {}
+        for u in self.node_positions:
+            nbrs = adj.get(u, set())
+            if not nbrs:
+                continue
+
+            next_hop = None
+            if u in exit_paths and len(exit_paths[u]) >= 2:
+                next_hop = exit_paths[u][-2]
+
+            hu = self.hazard.levels.get(u, 0.0)
+            u_blk = u in self.hazard.blocked
+
+            node_signs = []
+            for v in nbrs:
+                hv = self.hazard.levels.get(v, 0.0)
+                he = max(hu, hv)
+                v_blk = v in self.hazard.blocked
+                is_blocked = u_blk or v_blk or (he >= 0.80)
+                is_caution = (he >= 0.30)
+
+                if is_blocked:
+                    action = "BLOCKED"
+                elif is_caution:
+                    action = "CAUTION"
+                elif self.alarm_active and v == next_hop:
+                    action = "ARROW"
+                elif not self.alarm_active and v == next_hop:
+                    action = "NORMAL_ARROW"
+                else:
+                    action = "NORMAL"
+
+                node_signs.append({
+                    "target": v,
+                    "action": action,
+                    "hazard": round(he, 2)
+                })
+
+            signboards[u] = node_signs
+
+        return signboards
+
     def state_dict(self):
         return {
             "t":            round(self.t, 1),
@@ -272,6 +340,7 @@ class Simulation:
             "speed":        self.speed,
             "pedestrians":  [a.to_dict() for a in self.agents],
             "hazards":      self.hazard.to_dict(),
+            "signboards":   self.compute_signboards(),
             "metrics":      self.metrics(),
         }
 

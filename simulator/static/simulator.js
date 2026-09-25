@@ -261,9 +261,10 @@ function render() {
   const hazards = lastState ? lastState.hazards : {};
 
   drawGrid(lw, lh);
-  drawEdges(floorEdges, hazards);
+  drawCorridors(floorEdges, hazards);
   drawHazardGlows(floorNodes, hazards);
   drawNodes(floorNodes, hazards);
+  drawSignboards(lastState ? lastState.signboards : null, floorNodes);
   if (lastState) {
     drawRouteLines(lastState.pedestrians, hazards);
     drawAgents(lastState.pedestrians, prevState ? prevState.pedestrians : null, alpha);
@@ -284,34 +285,212 @@ function drawGrid(lw, lh) {
   }
 }
 
-function drawEdges(edges, hazards) {
+// ── Physical Corridor Walls & Floor Deck Rendering ───────────────────────────
+function drawCorridors(edges, hazards) {
   edges.forEach(e => {
     const s = building.nodes[e.source], t = building.nodes[e.target];
     if (!s || !t) return;
-    const [sx, sy] = toScreen(s.x, s.y);
-    const [tx_, ty_] = toScreen(t.x, t.y);
+
+    const dx = t.x - s.x;
+    const dy = t.y - s.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-4) return;
+
+    const ux = dx / len, uy = dy / len;
+    const nx = -uy, ny = ux;
+    // Physical corridor half-width in meters:
+    const hw = ((e.width || 2.4) / 2);
+
+    // 4 corners of corridor polygon in world meters
+    const [p1x, p1y] = toScreen(s.x + nx * hw, s.y + ny * hw);
+    const [p2x, p2y] = toScreen(t.x + nx * hw, t.y + ny * hw);
+    const [p3x, p3y] = toScreen(t.x - nx * hw, t.y - ny * hw);
+    const [p4x, p4y] = toScreen(s.x - nx * hw, s.y - ny * hw);
+
     const hs = (hazards[e.source] || {}).level || 0;
     const ht = (hazards[e.target] || {}).level || 0;
     const h  = Math.max(hs, ht);
     const blk = (hazards[e.source] || {}).blocked || (hazards[e.target] || {}).blocked;
-    const w  = Math.max(1.5, (e.width || 2) * viewScale * 0.14);
 
+    // 1. Walkway Floor Surface
     ctx.beginPath();
-    ctx.moveTo(sx, sy); ctx.lineTo(tx_, ty_);
+    ctx.moveTo(p1x, p1y);
+    ctx.lineTo(p2x, p2y);
+    ctx.lineTo(p3x, p3y);
+    ctx.lineTo(p4x, p4y);
+    ctx.closePath();
+
     if (blk) {
-      ctx.strokeStyle = "rgba(239,68,68,0.5)";
-      ctx.setLineDash([5, 5]);
+      ctx.fillStyle = "rgba(239, 68, 68, 0.22)";
     } else if (h > 0.05) {
-      const rgb = (hazards[e.source] || hazards[e.target] || {}).rgb || [249,115,22];
-      ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${0.2 + h * 0.5})`;
+      const rgb = (hazards[e.source] || hazards[e.target] || {}).rgb || [249, 115, 22];
+      ctx.fillStyle = `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${0.15 + h * 0.45})`;
+    } else {
+      ctx.fillStyle = "rgba(18, 26, 42, 0.85)";
+    }
+    ctx.fill();
+
+    // 2. Physical Structural Walls (Left and Right Boundaries)
+    const wallW = Math.max(1.5, Math.min(3.5, viewScale * 0.22));
+    ctx.lineWidth = wallW;
+    ctx.lineCap = "round";
+
+    // Left boundary wall
+    ctx.beginPath();
+    ctx.moveTo(p1x, p1y);
+    ctx.lineTo(p2x, p2y);
+    if (blk) {
+      ctx.strokeStyle = "rgba(239, 68, 68, 0.9)";
+      ctx.setLineDash([4, 4]);
+    } else if (h > 0.3) {
+      ctx.strokeStyle = "rgba(249, 115, 22, 0.85)";
       ctx.setLineDash([]);
     } else {
-      ctx.strokeStyle = "rgba(148,163,184,0.16)";
+      ctx.strokeStyle = "rgba(71, 85, 105, 0.85)";
       ctx.setLineDash([]);
     }
-    ctx.lineWidth = blk ? w : (h > 0.05 ? w : Math.max(1, w * 0.5));
+    ctx.stroke();
+
+    // Right boundary wall
+    ctx.beginPath();
+    ctx.moveTo(p4x, p4y);
+    ctx.lineTo(p3x, p3y);
     ctx.stroke();
     ctx.setLineDash([]);
+
+    // 3. Subtle Centerline Path Guide
+    const [sx, sy] = toScreen(s.x, s.y);
+    const [tx, ty] = toScreen(t.x, t.y);
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(tx, ty);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = blk ? "rgba(239, 68, 68, 0.35)" : "rgba(148, 163, 184, 0.16)";
+    ctx.setLineDash([3, 5]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  });
+}
+
+// ── Dynamic IoT Edge Router Signboards ───────────────────────────────────────
+function drawSignboards(signboards, floorNodes) {
+  if (!signboards) return;
+  const now = performance.now();
+
+  floorNodes.forEach(u => {
+    const signs = signboards[u.id];
+    if (!signs || !signs.length) return;
+
+    signs.forEach(sign => {
+      const v = building.nodes[sign.target];
+      if (!v || v.floor !== currentFloor) return;
+
+      const dx = v.x - u.x;
+      const dy = v.y - u.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < 1e-4) return;
+
+      const ux = dx / dist, uy = dy / dist;
+      const angle = Math.atan2(dy, dx);
+
+      // Position signboard at corridor entrance threshold (world meters)
+      const offsetM = Math.min(dist * 0.38, 2.4);
+      const [px, py] = toScreen(u.x + ux * offsetM, u.y + uy * offsetM);
+
+      // Sign dimensions
+      const signW = Math.max(16, Math.min(26, 4.2 * viewScale));
+      const signH = Math.max(10, Math.min(16, 2.6 * viewScale));
+
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(angle);
+
+      const act = sign.action; // 'ARROW', 'BLOCKED', 'CAUTION', 'NORMAL_ARROW', 'NORMAL'
+
+      const drawBox = (bg, border) => {
+        ctx.fillStyle = bg;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(-signW / 2, -signH / 2, signW, signH, 3);
+        else ctx.rect(-signW / 2, -signH / 2, signW, signH);
+        ctx.fill();
+        ctx.strokeStyle = border;
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      };
+
+      if (act === "ARROW") {
+        // High-priority dynamic evacuation arrow (Green LED)
+        const pulse = 0.8 + 0.2 * Math.sin(now / 180);
+        ctx.shadowColor = "#22c55e";
+        ctx.shadowBlur = 8 * pulse;
+
+        drawBox("#064e3b", "#22c55e");
+
+        // Directional arrow icon pointing down corridor toward v
+        ctx.fillStyle = "#4ade80";
+        ctx.beginPath();
+        const aw = signW * 0.36;
+        const ah = signH * 0.40;
+        ctx.moveTo(aw, 0);
+        ctx.lineTo(-aw * 0.5, -ah);
+        ctx.lineTo(-aw * 0.15, 0);
+        ctx.lineTo(-aw * 0.5, ah);
+        ctx.closePath();
+        ctx.fill();
+
+      } else if (act === "BLOCKED") {
+        // Danger / Closed Corridor Sign (Red X)
+        const pulse = 0.85 + 0.15 * Math.sin(now / 150);
+        ctx.shadowColor = "#ef4444";
+        ctx.shadowBlur = 9 * pulse;
+
+        drawBox("#7f1d1d", "#ef4444");
+
+        // Bold Red X
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        const sz = Math.min(signW, signH) * 0.32;
+        ctx.moveTo(-sz, -sz); ctx.lineTo(sz, sz);
+        ctx.moveTo(sz, -sz); ctx.lineTo(-sz, sz);
+        ctx.stroke();
+
+      } else if (act === "CAUTION") {
+        // Caution / Warning sign (Amber Triangle)
+        ctx.shadowColor = "#f59e0b";
+        ctx.shadowBlur = 6;
+
+        drawBox("#78350f", "#f59e0b");
+
+        // Warning triangle
+        ctx.fillStyle = "#fbbf24";
+        ctx.beginPath();
+        const tw = signW * 0.30;
+        const th = signH * 0.36;
+        ctx.moveTo(0, -th);
+        ctx.lineTo(tw, th);
+        ctx.lineTo(-tw, th);
+        ctx.closePath();
+        ctx.fill();
+
+      } else if (act === "NORMAL_ARROW") {
+        // Quiescent normal egress indicator (dim green)
+        drawBox("rgba(15, 23, 42, 0.85)", "rgba(34, 197, 94, 0.45)");
+
+        ctx.fillStyle = "rgba(74, 222, 128, 0.65)";
+        ctx.beginPath();
+        const aw = signW * 0.28;
+        const ah = signH * 0.30;
+        ctx.moveTo(aw, 0);
+        ctx.lineTo(-aw * 0.5, -ah);
+        ctx.lineTo(-aw * 0.15, 0);
+        ctx.lineTo(-aw * 0.5, ah);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      ctx.restore();
+    });
   });
 }
 
@@ -524,6 +703,29 @@ function showTooltip(cx, cy, node) {
   hzEl.textContent  = hz ? `${(hz.level*100).toFixed(0)}%  ${hz.type.replace(/_/g," ")}` : "Safe";
   hzEl.style.color  = hz && hz.level > 0.3 ? "var(--red)" : hz && hz.level > 0.05 ? "var(--orange)" : "var(--text-muted)";
   document.getElementById("tt-occupancy").textContent = `${occ} persons`;
+
+  const signs = lastState && lastState.signboards ? lastState.signboards[node.id] : null;
+  const signEl = document.getElementById("tt-sign");
+  if (signEl) {
+    let signSummary = "Standby (Normal)";
+    let signColor = "var(--text-muted)";
+    if (signs && signs.length > 0) {
+      const arrow = signs.find(s => s.action === "ARROW");
+      const blocked = signs.filter(s => s.action === "BLOCKED");
+      if (arrow) {
+        signSummary = `➜ Exit to ${arrow.target.replace(/_f[123]$/i, "").replace(/_/g, " ")}`;
+        signColor = "var(--green)";
+      } else if (blocked.length === signs.length) {
+        signSummary = "⛔ Isolated (All Blocked)";
+        signColor = "var(--red)";
+      } else if (blocked.length > 0) {
+        signSummary = `⚠️ ${blocked.length} Corridor(s) Blocked`;
+        signColor = "var(--yellow)";
+      }
+    }
+    signEl.textContent = signSummary;
+    signEl.style.color = signColor;
+  }
 
   const rect = canvas.getBoundingClientRect();
   tooltip.style.left = `${Math.min(cx - rect.left + 14, logicalW() - 180)}px`;
