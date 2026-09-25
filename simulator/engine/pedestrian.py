@@ -81,9 +81,13 @@ def spawn_pedestrians(n: int, node_positions: dict, node_floors: dict,
         nid for nid in node_positions
         if not any(t.lower() in nid.lower() for t in ("muster", "helipad", "slide_escape"))
         and not any(t.lower() in nid.lower() for t in ("stair", "hoist", "elevator"))
+        and not any(t.lower() in nid.lower() for t in ("corridor", "perimeter", "catwalk", "walkway"))
     ]
     if not eligible:
-        eligible = list(node_positions.keys())
+        eligible = [
+            nid for nid in node_positions
+            if not any(t.lower() in nid.lower() for t in ("muster", "helipad", "slide_escape"))
+        ]
 
     agents = []
     for i in range(n):

@@ -209,8 +209,8 @@ def generate_industrial_plant(name: str = 'LBP Petrochemical Refinery') -> Build
         
         # South Perimeter Egress Path to Muster Bravo
         ('compressor_shed', 'corridor_perimeter_s', 15.0, 3.0, 18),
-        ('loading_bay', 'corridor_perimeter_s', 25.0, 3.5, 20),
-        ('stair_south_f1', 'corridor_perimeter_s', 15.0, 2.5, 15),
+        ('loading_bay', 'stair_south_f1', 28.0, 3.5, 20),
+        ('stair_south_f1', 'corridor_perimeter_s', 45.0, 3.0, 20),
         ('pipe_rack_junc_2', 'stair_south_f1', 35.0, 2.0, 10),
         ('corridor_perimeter_s', 'muster_point_bravo', 12.0, 5.0, 50)
     ]

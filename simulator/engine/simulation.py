@@ -188,13 +188,29 @@ class Simulation:
                 or self.router.is_blocked_path(agent.path, self.hazard.blocked)
             )
             if needs:
-                src = agent.current_node or _nearest_node(
-                    agent.x, agent.y, self.node_positions, agent.floor)
-                new_path = self.router.get_path(src, agent.floor)
-                if new_path:
-                    agent.path = new_path[1:]
-                    if agent.state == PedestrianState.MOVING:
-                        agent.state = PedestrianState.REROUTING
+                target_id = agent.path[0] if agent.path else None
+                target_h = self.hazard.levels.get(target_id, 0.0) if target_id else 1.0
+                target_blocked = (target_id in self.hazard.blocked) if target_id else True
+
+                # If forward waypoint target_id is safe and unblocked, continue forward through target_id
+                if target_id and target_h < 0.4 and not target_blocked:
+                    new_path = self.router.get_path(target_id, agent.floor)
+                    if new_path:
+                        agent.path = new_path
+                else:
+                    # Forward waypoint is dangerous or blocked: retreat to current node or nearest safe node on current floor
+                    curr_h = self.hazard.levels.get(agent.current_node, 0.0)
+                    curr_blocked = agent.current_node in self.hazard.blocked
+                    if agent.current_node and curr_h < 0.4 and not curr_blocked:
+                        src = agent.current_node
+                    else:
+                        src = _nearest_node(agent.x, agent.y, self.node_positions, self.node_floors, agent.floor)
+                    new_path = self.router.get_path(src, agent.floor)
+                    if new_path:
+                        agent.path = new_path[1:]
+
+                if agent.state == PedestrianState.MOVING and needs and force:
+                    agent.state = PedestrianState.REROUTING
 
     def _update_states(self):
         for agent in self.agents:
@@ -221,7 +237,7 @@ class Simulation:
             if h >= DANGER_THRESHOLD:
                 agent.state = PedestrianState.DANGER
                 if not agent.path or self.router.is_blocked_path(agent.path, self.hazard.blocked):
-                    src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, agent.floor)
+                    src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, self.node_floors, agent.floor)
                     p = self.router.get_path(src, agent.floor)
                     if p: agent.path = p[1:]
                 continue
@@ -243,13 +259,13 @@ class Simulation:
                 if agent.reaction_delay <= 0.0:
                     agent.state = PedestrianState.MOVING
                     # Compute safe egress path now that worker has reacted
-                    src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, agent.floor)
+                    src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, self.node_floors, agent.floor)
                     p = self.router.get_path(src, agent.floor)
                     if p: agent.path = p[1:]
 
             elif agent.state in (PedestrianState.MOVING, PedestrianState.REROUTING):
                 if not agent.path:
-                    src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, agent.floor)
+                    src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, self.node_floors, agent.floor)
                     p = self.router.get_path(src, agent.floor)
                     if p: agent.path = p[1:]
                 if agent.state == PedestrianState.REROUTING and agent.path:
@@ -376,9 +392,11 @@ class Simulation:
                 "edges": edges_out, "exits": self.exits}
 
 
-def _nearest_node(x, y, positions, floor):
+def _nearest_node(x, y, positions, node_floors=None, floor=1):
     best, best_d = None, math.inf
     for nid, (nx_, ny_) in positions.items():
+        if node_floors and node_floors.get(nid, 1) != floor:
+            continue
         d = math.hypot(x - nx_, y - ny_)
         if d < best_d:
             best_d = d; best = nid
