@@ -373,11 +373,6 @@ function drawCorridors(edges, hazards) {
 }
 
 // ── Dynamic IoT Edge Router Signboards ───────────────────────────────────────
-function drawSignboards(signboards, floorNodes) {
-  if (!signboards) return;
-  const now = performance.now();
-
-// ── Dynamic IoT Edge Router Signboards ───────────────────────────────────────
 let signPolicy = "dijkstra"; // "dijkstra", "marl_demo", "random"
 let marlDemoCache = {};
 let lastMarlUpdate = 0;
