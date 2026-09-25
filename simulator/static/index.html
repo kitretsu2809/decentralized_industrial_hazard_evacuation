@@ -100,6 +100,19 @@
       </div>
     </div>
 
+    <!-- Signboard Output Policy -->
+    <div class="panel">
+      <div class="panel-title">IoT Dynamic Signboards (Policy Output)</div>
+      <select id="sign-policy-select" style="margin-bottom:6px">
+        <option value="dijkstra">📍 Classical Safe Egress (Dijkstra)</option>
+        <option value="marl_demo">🤖 MARL Neural Policy (Active Demo)</option>
+        <option value="random">🎲 Random Action Exploration (ε-greedy)</option>
+      </select>
+      <div style="font-size:0.68rem;color:var(--text-muted);line-height:1.35">
+        Each node displays dynamic signage: <span style="color:#4ade80;font-weight:600">➤ Green Arrow</span> (Allow/Exit), <span style="color:#f87171;font-weight:600">✖ Red X</span> (Block), or <span style="color:#fbbf24;font-weight:600">▲ Amber</span> (Detour).
+      </div>
+    </div>
+
     <!-- Disaster Injection -->
     <div class="panel">
       <div class="panel-title">Inject Hazard</div>

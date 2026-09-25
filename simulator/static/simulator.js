@@ -377,114 +377,159 @@ function drawSignboards(signboards, floorNodes) {
   if (!signboards) return;
   const now = performance.now();
 
-  floorNodes.forEach(u => {
-    const signs = signboards[u.id];
-    if (!signs || !signs.length) return;
+// ── Dynamic IoT Edge Router Signboards ───────────────────────────────────────
+let signPolicy = "dijkstra"; // "dijkstra", "marl_demo", "random"
+let marlDemoCache = {};
+let lastMarlUpdate = 0;
 
-    signs.forEach(sign => {
+function drawSignboards(signboards, floorNodes) {
+  if (!building) return;
+  const now = performance.now();
+
+  // If in marl_demo or random mode, update simulated neural policy outputs
+  if (signPolicy !== "dijkstra" && now - lastMarlUpdate > (signPolicy === "random" ? 1800 : 2500)) {
+    lastMarlUpdate = now;
+    floorNodes.forEach(u => {
+      const edges = building.edges.filter(e => e.source === u.id || e.target === u.id);
+      marlDemoCache[u.id] = {};
+      edges.forEach(e => {
+        const vId = e.source === u.id ? e.target : e.source;
+        if (signPolicy === "random") {
+          const acts = ["ARROW", "BLOCKED", "CAUTION", "ARROW"];
+          marlDemoCache[u.id][vId] = acts[Math.floor(Math.random() * acts.length)];
+        } else {
+          // MARL Demo: smart heuristic load-balancing + hazard avoidance
+          const hz = (lastState && lastState.hazards[vId]) ? lastState.hazards[vId].level : 0;
+          if (hz > 0.4) marlDemoCache[u.id][vId] = "BLOCKED";
+          else if (hz > 0.15) marlDemoCache[u.id][vId] = "CAUTION";
+          else marlDemoCache[u.id][vId] = (Math.random() > 0.35) ? "ARROW" : "NORMAL_ARROW";
+        }
+      });
+    });
+  }
+
+  floorNodes.forEach(u => {
+    const signs = (signboards && signboards[u.id]) ? signboards[u.id] : [];
+    // Ensure every connected corridor has an active sign unit
+    const targetSigns = signs.length > 0 ? signs : building.edges
+      .filter(e => (e.source === u.id || e.target === u.id))
+      .map(e => ({
+        target: e.source === u.id ? e.target : e.source,
+        action: "NORMAL_ARROW",
+        hazard: 0.0
+      }));
+
+    targetSigns.forEach(sign => {
       const v = building.nodes[sign.target];
       if (!v || v.floor !== currentFloor) return;
 
-      const dx = v.x - u.x;
-      const dy = v.y - u.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist < 1e-4) return;
+      const [sx, sy] = toScreen(u.x, u.y);
+      const [tx, ty] = toScreen(v.x, v.y);
+      const dx = tx - sx;
+      const dy = ty - sy;
+      const distPx = Math.hypot(dx, dy);
+      if (distPx < 8) return;
 
-      const ux = dx / dist, uy = dy / dist;
+      const ux = dx / distPx;
+      const uy = dy / distPx;
       const angle = Math.atan2(dy, dx);
 
-      // Position signboard at corridor entrance threshold (world meters)
-      const offsetM = Math.min(dist * 0.38, 2.4);
-      const [px, py] = toScreen(u.x + ux * offsetM, u.y + uy * offsetM);
+      // Position signboard along corridor, safely outside the node circle and label:
+      const nodeR = (u.is_exit ? 12 : 9) * Math.max(0.7, Math.min(1.5, viewScale / 3.0));
+      const offsetPx = Math.min(distPx * 0.42, Math.max(nodeR + 18, 26 * (viewScale / 3.0)));
 
-      // Sign dimensions
-      const signW = Math.max(16, Math.min(26, 4.2 * viewScale));
-      const signH = Math.max(10, Math.min(16, 2.6 * viewScale));
+      const px = sx + ux * offsetPx;
+      const py = sy + uy * offsetPx;
+
+      // Determine active action
+      let act = sign.action;
+      if (signPolicy !== "dijkstra" && marlDemoCache[u.id] && marlDemoCache[u.id][sign.target]) {
+        act = marlDemoCache[u.id][sign.target];
+      }
+
+      // Dimensions (prominent and readable)
+      const signW = Math.max(22, Math.min(36, 5.5 * viewScale));
+      const signH = Math.max(13, Math.min(20, 3.2 * viewScale));
 
       ctx.save();
       ctx.translate(px, py);
       ctx.rotate(angle);
 
-      const act = sign.action; // 'ARROW', 'BLOCKED', 'CAUTION', 'NORMAL_ARROW', 'NORMAL'
-
-      const drawBox = (bg, border) => {
+      const drawSignBg = (bg, border, shadow, pulseAmt = 0) => {
+        if (shadow) {
+          ctx.shadowColor = shadow;
+          ctx.shadowBlur = 8 + pulseAmt;
+        }
         ctx.fillStyle = bg;
         ctx.beginPath();
-        if (ctx.roundRect) ctx.roundRect(-signW / 2, -signH / 2, signW, signH, 3);
+        if (ctx.roundRect) ctx.roundRect(-signW / 2, -signH / 2, signW, signH, 3.5);
         else ctx.rect(-signW / 2, -signH / 2, signW, signH);
         ctx.fill();
+
         ctx.strokeStyle = border;
-        ctx.lineWidth = 1.2;
+        ctx.lineWidth = 1.5;
         ctx.stroke();
       };
 
-      if (act === "ARROW") {
-        // High-priority dynamic evacuation arrow (Green LED)
-        const pulse = 0.8 + 0.2 * Math.sin(now / 180);
-        ctx.shadowColor = "#22c55e";
-        ctx.shadowBlur = 8 * pulse;
+      if (act === "ARROW" || act === "NORMAL_ARROW") {
+        // Green LED Evacuation Arrow (Safe Exit Route)
+        const pulse = Math.sin(now / 180) * 3;
+        drawSignBg("#022c22", "#22c55e", "#22c55e", pulse);
 
-        drawBox("#064e3b", "#22c55e");
-
-        // Directional arrow icon pointing down corridor toward v
+        // Bold directional chevron pointing along corridor
         ctx.fillStyle = "#4ade80";
         ctx.beginPath();
-        const aw = signW * 0.36;
-        const ah = signH * 0.40;
+        const aw = signW * 0.38;
+        const ah = signH * 0.42;
         ctx.moveTo(aw, 0);
-        ctx.lineTo(-aw * 0.5, -ah);
-        ctx.lineTo(-aw * 0.15, 0);
-        ctx.lineTo(-aw * 0.5, ah);
+        ctx.lineTo(-aw * 0.45, -ah);
+        ctx.lineTo(-aw * 0.1, 0);
+        ctx.lineTo(-aw * 0.45, ah);
         ctx.closePath();
         ctx.fill();
 
       } else if (act === "BLOCKED") {
-        // Danger / Closed Corridor Sign (Red X)
-        const pulse = 0.85 + 0.15 * Math.sin(now / 150);
-        ctx.shadowColor = "#ef4444";
-        ctx.shadowBlur = 9 * pulse;
+        // Red LED "DO NOT ENTER / BLOCKED" (Hazard Ahead)
+        const pulse = Math.sin(now / 150) * 4;
+        drawSignBg("#450a0a", "#ef4444", "#ef4444", pulse);
 
-        drawBox("#7f1d1d", "#ef4444");
-
-        // Bold Red X
+        // Bold white X
         ctx.strokeStyle = "#ffffff";
-        ctx.lineWidth = 1.8;
+        ctx.lineWidth = 2.0;
         ctx.beginPath();
-        const sz = Math.min(signW, signH) * 0.32;
+        const sz = Math.min(signW, signH) * 0.34;
         ctx.moveTo(-sz, -sz); ctx.lineTo(sz, sz);
         ctx.moveTo(sz, -sz); ctx.lineTo(-sz, sz);
         ctx.stroke();
 
       } else if (act === "CAUTION") {
-        // Caution / Warning sign (Amber Triangle)
-        ctx.shadowColor = "#f59e0b";
-        ctx.shadowBlur = 6;
-
-        drawBox("#78350f", "#f59e0b");
+        // Amber LED Warning / Detour Sign
+        const pulse = Math.sin(now / 220) * 3;
+        drawSignBg("#451a03", "#f59e0b", "#f59e0b", pulse);
 
         // Warning triangle
         ctx.fillStyle = "#fbbf24";
         ctx.beginPath();
-        const tw = signW * 0.30;
-        const th = signH * 0.36;
+        const tw = signW * 0.32;
+        const th = signH * 0.38;
         ctx.moveTo(0, -th);
         ctx.lineTo(tw, th);
         ctx.lineTo(-tw, th);
         ctx.closePath();
         ctx.fill();
 
-      } else if (act === "NORMAL_ARROW") {
-        // Quiescent normal egress indicator (dim green)
-        drawBox("rgba(15, 23, 42, 0.85)", "rgba(34, 197, 94, 0.45)");
+      } else {
+        // Standby Operational Waypoint
+        drawSignBg("rgba(15, 23, 42, 0.90)", "rgba(56, 189, 248, 0.5)", "#38bdf8", 0);
 
-        ctx.fillStyle = "rgba(74, 222, 128, 0.65)";
+        ctx.fillStyle = "#38bdf8";
         ctx.beginPath();
         const aw = signW * 0.28;
         const ah = signH * 0.30;
         ctx.moveTo(aw, 0);
-        ctx.lineTo(-aw * 0.5, -ah);
-        ctx.lineTo(-aw * 0.15, 0);
-        ctx.lineTo(-aw * 0.5, ah);
+        ctx.lineTo(-aw * 0.4, -ah);
+        ctx.lineTo(-aw * 0.1, 0);
+        ctx.lineTo(-aw * 0.4, ah);
         ctx.closePath();
         ctx.fill();
       }
@@ -793,6 +838,14 @@ document.getElementById("btn-reset").addEventListener("click", () => {
 const btnAlarm = document.getElementById("btn-alarm");
 if (btnAlarm) {
   btnAlarm.addEventListener("click", () => send({action:"toggle_alarm"}));
+}
+
+const signPolicySel = document.getElementById("sign-policy-select");
+if (signPolicySel) {
+  signPolicySel.addEventListener("change", (e) => {
+    signPolicy = e.target.value;
+    lastMarlUpdate = 0; // immediate update
+  });
 }
 
 const speedSlider = document.getElementById("speed-slider");
