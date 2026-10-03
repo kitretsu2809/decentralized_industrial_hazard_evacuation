@@ -577,7 +577,8 @@ if __name__ == "__main__":
     parser.add_argument("--save-dir", type=str, default="checkpoints", help="Directory to save checkpoints")
     parser.add_argument("--min-evacuees", type=int, default=20, help="Minimum headcount per episode (e.g. 20)")
     parser.add_argument("--max-evacuees", type=int, default=600, help="Maximum headcount per episode (e.g. 600)")
-    parser.add_argument("--no-curriculum", action="store_true", help="Disable progressive density scaling")
+    parser.add_argument("--curriculum", dest="curriculum", action="store_true", default=True, help="Enable 4-stage scenario curriculum (default: True)")
+    parser.add_argument("--no-curriculum", dest="curriculum", action="store_false", help="Disable 4-stage scenario curriculum")
     parser.add_argument("--eval", action="store_true", help="Run benchmark evaluation after training")
     parser.add_argument("--eval-only", action="store_true", help="Run only benchmark evaluation")
     parser.add_argument("--checkpoint", type=str, default=None, help="Path to checkpoint for evaluation")
@@ -593,7 +594,7 @@ if __name__ == "__main__":
             save_dir=args.save_dir,
             min_evacuees=args.min_evacuees,
             max_evacuees=args.max_evacuees,
-            curriculum=not args.no_curriculum,
+            curriculum=args.curriculum,
         )
         trainer.train(num_episodes=args.episodes)
         if args.eval:
