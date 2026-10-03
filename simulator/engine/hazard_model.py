@@ -49,15 +49,32 @@ class HazardSource:
 
 class HazardModel:
     """
-    adjacency: {node_id: [(neighbour_id, distance_m), ...]}
+    Graph Laplacian Advective-Diffusive Hazard Propagation with Vertical Buoyancy
+    and Strict Conservation of Mass.
     """
-    def __init__(self, adjacency: Dict[str, List[Tuple[str, float]]], exits: Optional[List[str]] = None):
+    def __init__(
+        self,
+        adjacency: Dict[str, List[Tuple[str, float]]],
+        exits: Optional[List[str]] = None,
+        node_floors: Optional[Dict[str, int]] = None,
+    ):
         self.adjacency = adjacency
-        self.exits: Set[str]                      = set(exits or [])
-        self.levels: Dict[str, float]             = {n: 0.0 for n in adjacency}
-        self.types:  Dict[str, Optional[HazardType]] = {n: None for n in adjacency}
+        self.exits: Set[str] = set(exits or [])
+        self.node_floors: Dict[str, int] = node_floors or {n: 1 for n in adjacency}
+        self.levels: Dict[str, float] = {n: 0.0 for n in adjacency}
+        self.types: Dict[str, Optional[HazardType]] = {n: None for n in adjacency}
         self.sources: List[HazardSource] = []
         self.blocked: Set[str] = set()
+
+        # Cache unique undirected edges: (u, v, dist)
+        seen_edges = set()
+        self.unique_edges: List[Tuple[str, str, float]] = []
+        for u, nbrs in self.adjacency.items():
+            for v, dist in nbrs:
+                edge_key = tuple(sorted([u, v]))
+                if edge_key not in seen_edges:
+                    seen_edges.add(edge_key)
+                    self.unique_edges.append((edge_key[0], edge_key[1], float(dist)))
 
     def inject(self, node_id: str, htype: Any, intensity: float,
                sustained: bool = True) -> None:
@@ -73,46 +90,79 @@ class HazardModel:
             self.blocked.add(node_id)
 
     def step(self, dt: float) -> None:
-        new_levels = dict(self.levels)
+        delta_c: Dict[str, float] = {n: 0.0 for n in self.levels}
 
-        # Pin sustained sources
-        for src in self.sources:
-            if src.sustained:
-                new_levels[src.node_id] = max(new_levels[src.node_id], src.intensity)
-                if self.types[src.node_id] is None:
-                    self.types[src.node_id] = src.htype
+        # 1. Compute conservative Laplacian flux across all unique edges
+        for u, v, edge_dist in self.unique_edges:
+            c_u = self.levels[u]
+            c_v = self.levels[v]
 
-        # Physical gradient-driven diffusion to immediate neighbours
-        for node, level in self.levels.items():
-            if level < 0.01: continue
-            htype = self.types[node]
-            if htype is None: continue
+            if abs(c_u - c_v) < 1e-4:
+                continue
+
+            # Identify driving source hazard
+            if c_u > c_v:
+                src_node, dst_node = u, v
+                c_high, c_low = c_u, c_v
+            else:
+                src_node, dst_node = v, u
+                c_high, c_low = c_v, c_u
+
+            htype = self.types.get(src_node) or HazardType.GAS_RELEASE
             rate = _PARAMS[htype]["rate"]
+            attenuation = math.exp(-edge_dist / CHAR_DIST)
 
-            for neighbour, edge_dist in self.adjacency.get(node, []):
-                # Outdoor muster exits do not accumulate indoor plume
-                if neighbour in self.exits:
-                    continue
+            # Vertical buoyancy stack effect
+            floor_src = self.node_floors.get(src_node, 1)
+            floor_dst = self.node_floors.get(dst_node, 1)
+            delta_floor = floor_dst - floor_src
 
-                grad = max(0.0, level - self.levels[neighbour])
-                if grad <= 0.001:
-                    continue
+            buoyancy = 1.0
+            if htype in (HazardType.FIRE, HazardType.GAS_RELEASE):
+                if delta_floor > 0:
+                    buoyancy = 2.5   # Hot smoke / fire rushes UP stairwells
+                elif delta_floor < 0:
+                    buoyancy = 0.40  # Downward smoke penetration is resisted
+            elif htype == HazardType.CHEMICAL_SPILL:
+                if delta_floor < 0:
+                    buoyancy = 2.0   # Dense chemical vapors pool DOWNWARD
+                elif delta_floor > 0:
+                    buoyancy = 0.20  # Dense liquid/vapors resist rising
 
-                attenuation = math.exp(-edge_dist / CHAR_DIST)
-                delta = rate * grad * dt * attenuation
-                if delta > 0.0001:
-                    new_levels[neighbour] = min(0.98, new_levels[neighbour] + delta)
-                    if self.types.get(neighbour) is None:
-                        self.types[neighbour] = htype
+            conductivity = rate * attenuation * buoyancy
+            flux = conductivity * (c_high - c_low) * dt
 
-        # Natural decay (non-source nodes)
-        source_nodes = {s.node_id for s in self.sources if s.sustained}
-        for node in new_levels:
-            if node not in source_nodes and new_levels[node] > 0:
-                htype = self.types.get(node)
-                if htype:
-                    decay = _PARAMS[htype]["decay"] * dt
-                    new_levels[node] = max(0.0, new_levels[node] - decay)
+            # CFL condition: prevent gradient inversion
+            max_flux = 0.40 * (c_high - c_low)
+            flux = min(flux, max_flux)
+
+            # Apply conservative mass transfer
+            delta_c[src_node] -= flux
+            delta_c[dst_node] += flux
+
+            if c_low + flux > 0.02 and self.types.get(dst_node) is None:
+                self.types[dst_node] = htype
+
+        # 2. Update levels and enforce boundaries
+        new_levels = {}
+        sustained_nodes = {s.node_id: s for s in self.sources if s.sustained}
+
+        for n, level in self.levels.items():
+            if n in self.exits:
+                # Exterior muster zones remain clean (positive-pressure atmospheric dispersion)
+                new_levels[n] = 0.0
+                continue
+
+            if n in sustained_nodes:
+                src = sustained_nodes[n]
+                new_levels[n] = max(src.intensity, level + delta_c[n])
+                if self.types[n] is None:
+                    self.types[n] = src.htype
+            else:
+                htype = self.types.get(n)
+                decay = (_PARAMS[htype]["decay"] * dt) if htype else 0.0
+                updated = level + delta_c[n] - decay
+                new_levels[n] = max(0.0, min(1.0, updated))
 
         self.levels = new_levels
         self.blocked = {n for n, v in self.levels.items() if v >= BLOCKED_THRESHOLD}

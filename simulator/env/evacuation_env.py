@@ -257,7 +257,8 @@ class IndustrialEvacuationEnv(ParallelEnv):
 
             self.prev_actions[agent] = act.copy()
 
-        # Update DijkstraRouter edge costs to guide pedestrian egress steering
+        # Update local signboard actions directly in simulation engine
+        self.sim.set_signboard_actions(actions)
         self._apply_policy_to_router(edge_penalties)
 
         # 2. Advance continuous SFM physics by DECISION_DT

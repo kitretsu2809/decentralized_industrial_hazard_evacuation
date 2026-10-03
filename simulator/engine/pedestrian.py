@@ -37,6 +37,11 @@ class Pedestrian:
     reroute_cooldown: float = 0.0
     age: float = 0.0             # simulation time this agent has existed
 
+    # Physical injury & physiological exposure tracking
+    fed: float = 0.0             # ISO 13571 Fractional Effective Dose (lethal >= 1.0)
+    csi: float = 0.0             # Crush Stress Index (lethal >= 15.0 kPa*s)
+    compliance: float = 1.0      # Stochastic sign obedience probability
+
     # Pre-evacuation & anchor tracking
     anchor_x: float = 0.0        # workstation anchor x
     anchor_y: float = 0.0        # workstation anchor y

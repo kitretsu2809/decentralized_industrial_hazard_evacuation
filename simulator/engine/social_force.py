@@ -176,7 +176,13 @@ class SocialForceModel:
                         diff_sq = (px - px[i])**2 + (py - py[i])**2
                         local_count = float(np.sum(diff_sq < 9.0) - 1)
                         local_density = local_count / (math.pi * 9.0)
-                        v_des = weidmann_speed(agent.desired_speed, local_density)
+                        v_base = weidmann_speed(agent.desired_speed, local_density)
+
+                        # Jin's Empirical Smoke Obscuration Law (SFPE Handbook Ch. 59)
+                        # Irritating smoke reduces visibility and footing, slowing walking speed
+                        h_loc = hazard_levels.get(agent.current_node, 0.0)
+                        smoke_factor = max(0.20, 1.0 - 0.75 * h_loc)
+                        v_des = v_base * smoke_factor
 
                         e_x = dx_goal / d_goal
                         e_y = dy_goal / d_goal
@@ -203,7 +209,8 @@ class SocialForceModel:
                 ddx_, ddy_ = px[i] - hx_, py[i] - hy_
                 dd_ = math.hypot(ddx_, ddy_)
                 if dd_ < 0.01: ddx_, ddy_, dd_ = 1.0, 0.0, 1.0
-                flee_mag = MASS * K_FLEE * h
+                # Capped flee force to prevent unphysical high-speed propulsion inside smoke
+                flee_mag = min(MASS * 3.0, MASS * K_FLEE * h)
                 fx[i] += flee_mag * ddx_ / dd_
                 fy[i] += flee_mag * ddy_ / dd_
 

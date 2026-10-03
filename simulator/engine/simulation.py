@@ -67,7 +67,7 @@ class Simulation:
         for nid in self.node_positions:
             adj_with_dist.setdefault(nid, [])
 
-        self.hazard  = HazardModel(adj_with_dist, exits=self.exits)
+        self.hazard  = HazardModel(adj_with_dist, exits=self.exits, node_floors=self.node_floors)
         self.router  = DijkstraRouter()
         self.router.build(self.edge_list, self.exits, self.node_floors)
         self.sfm     = SocialForceModel(self.node_positions, self.node_floors, self.edge_list)
@@ -84,12 +84,15 @@ class Simulation:
 
         self.policy_mode: str = "dijkstra"  # "dijkstra" | "marl" | "static"
         self.policy_multipliers: Dict[Tuple[str, str], float] = {}
+        self.signboard_actions: Dict[str, np.ndarray] = {}
+        self._static_paths: Dict[str, List[str]] = {}
         self.active_comm_nodes: Optional[Set[str]] = None
         self.policy_model = None
         self._policy_edge_index = None
         self._policy_hidden = None
         self._last_hazards = {}
         self._last_crowds = {}
+        self._compute_static_paths()
         self._init_policy()
 
         self._init_agents()
@@ -135,6 +138,95 @@ class Simulation:
                 self.policy_multipliers = {}
                 self.router.update_weights({}, set())  # Reset to static geometric distance
             self._reroute_all(force=True)
+
+    def _compute_static_paths(self):
+        """Precomputes immutable blueprint shortest paths for NFPA 101 static signage."""
+        import networkx as nx
+        g_geom = nx.Graph()
+        for s, t, d, w in self.edge_list:
+            g_geom.add_edge(s, t, weight=d)
+        self._static_paths = {}
+        for nid in self.node_positions:
+            best_cost = math.inf
+            best_p = []
+            for ex in self.exits:
+                try:
+                    p = nx.dijkstra_path(g_geom, nid, ex, weight="weight")
+                    c = nx.dijkstra_path_length(g_geom, nid, ex, weight="weight")
+                    if c < best_cost:
+                        best_cost = c
+                        best_p = p
+                except (nx.NetworkXNoPath, nx.NodeNotFound):
+                    continue
+            self._static_paths[nid] = best_p
+
+    def set_signboard_actions(self, actions: Dict[str, Any]):
+        """Sets the active corridor control states for all signboards from MARL policy."""
+        self.signboard_actions = actions
+
+    def get_next_waypoint(self, current_node: str, floor: int, agent_id: int = 0) -> Optional[str]:
+        """
+        Determines the immediate next hop waypoint for a pedestrian at current_node.
+        In MARL mode: Strictly queries the local signboard directional arrow.
+        In Static mode: Follows fixed geometric exit signs.
+        In Dijkstra mode: Follows centralized server shortest safe path.
+        """
+        if not current_node or current_node in self.exits:
+            return None
+
+        nbrs = self.agent_neighbors.get(current_node, [])
+        if not nbrs:
+            return None
+
+        # ── 1. MARL MODE: Local Signboard Guidance (Hop-by-Hop) ──────────
+        if self.policy_mode == "marl":
+            acts = self.signboard_actions.get(current_node, None)
+            green_corridors = []
+            amber_corridors = []
+
+            for k, nbr in enumerate(nbrs[:6]):
+                act_code = int(acts[k]) if (acts is not None and k < len(acts)) else 0
+                hn = self.hazard.levels.get(nbr, 0.0)
+                is_blocked = (current_node in self.hazard.blocked or nbr in self.hazard.blocked or act_code == 2 or hn >= 0.80)
+
+                if is_blocked:
+                    continue  # Red X: impassable
+                elif act_code == 0:
+                    green_corridors.append((nbr, hn))
+                elif act_code == 1:
+                    amber_corridors.append((nbr, hn))
+
+            # Primary: Green Arrow corridors (sorted by least hazard)
+            if green_corridors:
+                for nbr, _ in green_corridors:
+                    if nbr in self.exits:
+                        return nbr
+                green_corridors.sort(key=lambda item: item[1])
+                return green_corridors[0][0]
+
+            # Secondary: Amber Detour corridors
+            if amber_corridors:
+                for nbr, _ in amber_corridors:
+                    if nbr in self.exits:
+                        return nbr
+                amber_corridors.sort(key=lambda item: item[1])
+                return amber_corridors[0][0]
+
+            # All corridors blocked / Red X
+            return None
+
+        # ── 2. STATIC NFPA MODE: Fixed geometric signs ───────────────────
+        elif self.policy_mode == "static":
+            if not self._static_paths:
+                self._compute_static_paths()
+            path = self._static_paths.get(current_node, [])
+            return path[1] if len(path) >= 2 else None
+
+        # ── 3. DIJKSTRA MODE: Centralized dynamic server ─────────────────
+        else:
+            p = self.router.get_path(current_node, floor)
+            return p[1] if len(p) >= 2 else None
+
 
     # ── Control API ───────────────────────────────────────────────────────────
     def set_broadcast(self, cb): self._broadcast_cb = cb
@@ -244,48 +336,34 @@ class Simulation:
         self.sfm.step(self.agents, self.hazard.levels, self.hazard.blocked, self.DT)
 
     def _reroute_all(self, force=False):
-        if self.policy_mode == "static":
-            # Static NFPA signage has no environmental awareness; pedestrians cannot reroute around hazards
-            for agent in self.agents:
-                if not agent.path and agent.state in (PedestrianState.MOVING, PedestrianState.REACTING, PedestrianState.DANGER):
-                    src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, self.node_floors, agent.floor)
-                    p = self.router.get_path(src, agent.floor)
-                    if p: agent.path = p[1:]
-            return
-
         for agent in self.agents:
             if agent.state in (PedestrianState.NORMAL, PedestrianState.REACTING,
                                PedestrianState.EVACUATED, PedestrianState.CASUALTY):
                 continue
-            needs = (
-                force
-                or not agent.path
-                or self.router.path_has_hazard(agent.path, self.hazard.levels, 0.4)
-                or self.router.is_blocked_path(agent.path, self.hazard.blocked)
-            )
-            if needs:
-                target_id = agent.path[0] if agent.path else None
-                target_h = self.hazard.levels.get(target_id, 0.0) if target_id else 1.0
-                target_blocked = (target_id in self.hazard.blocked) if target_id else True
 
-                # If forward waypoint target_id is safe and unblocked, continue forward through target_id
-                if target_id and target_h < 0.4 and not target_blocked:
-                    new_path = self.router.get_path(target_id, agent.floor)
-                    if new_path:
-                        agent.path = new_path
+            target_id = agent.path[0] if agent.path else None
+            needs_reroute = force or not agent.path
+            if target_id:
+                tgt_h = self.hazard.levels.get(target_id, 0.0)
+                tgt_blk = target_id in self.hazard.blocked
+                if tgt_h >= 0.80 or tgt_blk:
+                    needs_reroute = True
+                elif self.policy_mode == "marl":
+                    acts = self.signboard_actions.get(agent.current_node)
+                    nbrs = self.agent_neighbors.get(agent.current_node, [])
+                    if acts is not None and target_id in nbrs:
+                        k = nbrs.index(target_id)
+                        if int(acts[k]) == 2:  # Signboard turned to BLOCK
+                            needs_reroute = True
+
+            if needs_reroute:
+                src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, self.node_floors, agent.floor)
+                next_hop = self.get_next_waypoint(src, agent.floor, agent.id)
+                if next_hop:
+                    agent.path = [next_hop]
+                    agent.state = PedestrianState.MOVING
                 else:
-                    # Forward waypoint is dangerous or blocked: retreat to current node or nearest safe node on current floor
-                    curr_h = self.hazard.levels.get(agent.current_node, 0.0)
-                    curr_blocked = agent.current_node in self.hazard.blocked
-                    if agent.current_node and curr_h < 0.4 and not curr_blocked:
-                        src = agent.current_node
-                    else:
-                        src = _nearest_node(agent.x, agent.y, self.node_positions, self.node_floors, agent.floor)
-                    new_path = self.router.get_path(src, agent.floor)
-                    if new_path:
-                        agent.path = new_path[1:]
-
-                if agent.state == PedestrianState.MOVING and needs and force:
+                    agent.path = []
                     agent.state = PedestrianState.REROUTING
 
     def _update_states(self):
@@ -295,8 +373,12 @@ class Simulation:
 
             h = self.hazard.levels.get(agent.current_node, 0.0)
 
-            # 1. Casualty check
-            if h >= LETHAL_THRESHOLD:
+            # 1. ISO 13571:2012 Fractional Effective Dose (FED) Toxicity & Flashover
+            if h > 0.02:
+                # Accumulate toxic dosage: 30.0 s at C=1.0 is lethal
+                agent.fed += (h / 30.0) * self.DT
+
+            if agent.fed >= 1.0 or h >= 0.95:
                 agent.state = PedestrianState.CASUALTY
                 agent.vx = agent.vy = 0.0
                 agent.path = []
@@ -312,11 +394,11 @@ class Simulation:
             # 3. Danger override: if local hazard threatens room, react immediately
             if h >= DANGER_THRESHOLD:
                 agent.state = PedestrianState.DANGER
-                if self.policy_mode != "static":
-                    if not agent.path or self.router.is_blocked_path(agent.path, self.hazard.blocked):
-                        src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, self.node_floors, agent.floor)
-                        p = self.router.get_path(src, agent.floor)
-                        if p: agent.path = p[1:]
+                if not agent.path:
+                    src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, self.node_floors, agent.floor)
+                    next_hop = self.get_next_waypoint(src, agent.floor, agent.id)
+                    if next_hop:
+                        agent.path = [next_hop]
                 continue
 
             # 4. Normal Operating Regime (No alarm active, safe room)
@@ -335,18 +417,19 @@ class Simulation:
                 agent.reaction_delay -= self.DT
                 if agent.reaction_delay <= 0.0:
                     agent.state = PedestrianState.MOVING
-                    # Compute safe egress path now that worker has reacted
                     src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, self.node_floors, agent.floor)
-                    p = self.router.get_path(src, agent.floor)
-                    if p: agent.path = p[1:]
+                    next_hop = self.get_next_waypoint(src, agent.floor, agent.id)
+                    if next_hop:
+                        agent.path = [next_hop]
 
-            elif agent.state in (PedestrianState.MOVING, PedestrianState.REROUTING):
+            elif agent.state in (PedestrianState.MOVING, PedestrianState.REROUTING, PedestrianState.DANGER):
                 if not agent.path:
                     src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, self.node_floors, agent.floor)
-                    p = self.router.get_path(src, agent.floor)
-                    if p: agent.path = p[1:]
-                if agent.state == PedestrianState.REROUTING and agent.path:
-                    agent.state = PedestrianState.MOVING
+                    next_hop = self.get_next_waypoint(src, agent.floor, agent.id)
+                    if next_hop:
+                        agent.path = [next_hop]
+                        if agent.state == PedestrianState.REROUTING:
+                            agent.state = PedestrianState.MOVING
 
     def _init_agents(self):
         self.agents = spawn_pedestrians(
@@ -439,21 +522,15 @@ class Simulation:
                             bw = self.router.G[u][v].get("base_weight", 1.0)
                             self.router.G[u][v]["weight"] = bw * cost
 
-                try:
-                    exit_paths = nx.multi_source_dijkstra_path(
-                        self.router.G, self.exits, weight="weight"
-                    )
-                except Exception:
-                    exit_paths = {}
+                # Store active signboard actions
+                self.signboard_actions = {u: actions_np[i] for i, u in enumerate(self.sorted_nodes)}
 
                 signboards: Dict[str, List[Dict]] = {}
                 for i, u in enumerate(self.sorted_nodes):
                     nbrs = self.agent_neighbors.get(u, [])
                     if not nbrs:
                         continue
-                    next_hop = None
-                    if u in exit_paths and len(exit_paths[u]) >= 2:
-                        next_hop = exit_paths[u][-2]
+                    next_hop = self.get_next_waypoint(u, self.node_floors.get(u, 1))
                     hu = self.hazard.levels.get(u, 0.0)
                     u_blk = u in self.hazard.blocked
 
