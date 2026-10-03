@@ -282,12 +282,14 @@ class MAPPOTrainer:
         update_metrics = self._update_ppo(returns, advantages)
 
         metrics = self.env.sim.metrics()
-        survival_rate = (metrics["evacuated"] / max(1, self.env.sim.num_evacuees)) * 100.0
+        total_peds = metrics.get("total", self.env.sim.num_evacuees)
+        survival_rate = (metrics["evacuated"] / max(1, total_peds)) * 100.0
 
         return {
             "episode": episode_idx,
             "reward": round(total_reward, 2),
             "steps": step_count,
+            "total": total_peds,
             "evacuated": metrics["evacuated"],
             "casualties": metrics["casualties"],
             "survival_rate": round(survival_rate, 1),
@@ -380,15 +382,18 @@ class MAPPOTrainer:
             rew = metrics["reward"]
             cas = metrics["casualties"]
             evac = metrics["evacuated"]
+            total = metrics.get("total", evac + cas)
+            sim_t = metrics.get("sim_time", 0.0)
+            in_transit = max(0, total - evac - cas)
 
             print(
                 f"Ep {ep:3d}/{num_episodes:3d} | "
-                f"Reward: {rew:6.2f} | "
+                f"Total: {total:3d} (Evac: {evac:3d}, Cas: {cas:2d}, In-Transit: {in_transit:2d}) | "
                 f"Surv: {surv:5.1f}% | "
-                f"Evac: {evac:2d} | "
-                f"Cas: {cas:2d} | "
-                f"Loss: (π={metrics['pi_loss']:.3f}, V={metrics['v_loss']:.3f}) | "
-                f"Time: {dt:.2f}s"
+                f"EgressSim: {sim_t:4.1f}s | "
+                f"TrainWallTime: {dt:.2f}s | "
+                f"Reward: {rew:6.2f} | "
+                f"Loss: (π={metrics['pi_loss']:.3f}, V={metrics['v_loss']:.3f})"
             )
 
             # Checkpoint best model
