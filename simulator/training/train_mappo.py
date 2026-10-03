@@ -107,11 +107,17 @@ class MAPPOTrainer:
         ppo_epochs: int = 4,
         device: Optional[str] = None,
         save_dir: str = "checkpoints",
+        min_evacuees: int = 20,
+        max_evacuees: int = 600,
+        curriculum: bool = True,
     ):
         self.device = torch.device(
             device if device else ("cuda" if torch.cuda.is_available() else "cpu")
         )
-        self.env = env or IndustrialEvacuationEnv()
+        self.min_evacuees = min_evacuees
+        self.max_evacuees = max_evacuees
+        self.curriculum = curriculum
+        self.env = env or IndustrialEvacuationEnv(num_evacuees=min_evacuees)
         self.lr = lr
         self.gamma = gamma
         self.gae_lambda = gae_lambda
@@ -149,7 +155,37 @@ class MAPPOTrainer:
 
     def train_episode(self, episode_idx: int) -> Dict[str, float]:
         """Runs a single episode rollout and performs PPO update."""
-        obs, infos = self.env.reset()
+        # 1. Vary crowd density across [min_evacuees, max_evacuees] (20 to 600)
+        if self.curriculum:
+            max_curr = int(self.min_evacuees + (self.max_evacuees - self.min_evacuees) * min(1.0, episode_idx / 40.0))
+            num_evac = random.randint(self.min_evacuees, max(self.min_evacuees + 1, max_curr))
+        else:
+            num_evac = random.randint(self.min_evacuees, self.max_evacuees)
+
+        # 2. Comprehensive scenario sampling across all floors & disaster types
+        candidates = [
+            "tank_farm_a", "tank_farm_b", "reactor_1", "reactor_2",
+            "hazmat_basin", "compressor_shed", "pipe_rack_junc_1", "pipe_rack_junc_2",
+            "loading_bay", "pump_house", "corridor_f2_lab", "corridor_f3_mech",
+            "stair_north_f1", "stair_south_f1"
+        ]
+        target_node = random.choice(candidates)
+        hazard_type = random.choice(["GAS_RELEASE", "FIRE", "EXPLOSION", "CHEMICAL_SPILL"])
+        intensity = random.uniform(0.75, 0.98)
+
+        obs, infos = self.env.reset(options={
+            "num_evacuees": num_evac,
+            "node_id": target_node,
+            "hazard_type": hazard_type,
+            "intensity": intensity,
+            "inject": True,
+        })
+
+        # Dual disaster injection in 30% of episodes
+        if random.random() < 0.30:
+            sec_target = random.choice([c for c in candidates if c != target_node])
+            self.env.sim.inject_disaster(sec_target, random.choice(["FIRE", "GAS_RELEASE"]), random.uniform(0.65, 0.85))
+
         self.buffer.clear()
 
         hidden_state = torch.zeros(
@@ -515,6 +551,9 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
     parser.add_argument("--device", type=str, default="cpu", help="Device (cpu or cuda)")
     parser.add_argument("--save-dir", type=str, default="checkpoints", help="Directory to save checkpoints")
+    parser.add_argument("--min-evacuees", type=int, default=20, help="Minimum headcount per episode (e.g. 20)")
+    parser.add_argument("--max-evacuees", type=int, default=600, help="Maximum headcount per episode (e.g. 600)")
+    parser.add_argument("--no-curriculum", action="store_true", help="Disable progressive density scaling")
     parser.add_argument("--eval", action="store_true", help="Run benchmark evaluation after training")
     parser.add_argument("--eval-only", action="store_true", help="Run only benchmark evaluation")
     parser.add_argument("--checkpoint", type=str, default=None, help="Path to checkpoint for evaluation")
@@ -524,7 +563,14 @@ if __name__ == "__main__":
         ckpt = args.checkpoint or os.path.join(args.save_dir, "best_policy.pt")
         run_benchmark(policy_path=ckpt, num_runs=5, device=args.device)
     else:
-        trainer = MAPPOTrainer(lr=args.lr, device=args.device, save_dir=args.save_dir)
+        trainer = MAPPOTrainer(
+            lr=args.lr,
+            device=args.device,
+            save_dir=args.save_dir,
+            min_evacuees=args.min_evacuees,
+            max_evacuees=args.max_evacuees,
+            curriculum=not args.no_curriculum,
+        )
         trainer.train(num_episodes=args.episodes)
         if args.eval:
             best_ckpt = os.path.join(args.save_dir, "best_policy.pt")
