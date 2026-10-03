@@ -114,6 +114,40 @@ class TestIndustrialEvacuationEnv(unittest.TestCase):
         self.env.sim._update_states()
         self.assertEqual(ped.state, PedestrianState.CASUALTY)
 
+    def test_gradual_curriculum_monotonicity(self):
+        """Verifies that the gradual curriculum monotonically increases crowd size and hazard intensity."""
+        from simulator.training.train_mappo import MAPPOTrainer
+        trainer = MAPPOTrainer(
+            min_evacuees=20,
+            max_evacuees=600,
+            curriculum=True,
+            num_episodes=100,
+            device="cpu",
+        )
+        # Check tau progression for 5 key milestone episodes
+        episodes = [1, 25, 50, 75, 100]
+        n_values = []
+        h_values = []
+
+        for ep in episodes:
+            tau = (ep - 1) / 99.0
+            n_base = 20 + (600 - 20) * (tau ** 1.15)
+            h_base = 0.40 + 0.55 * tau
+            n_values.append(n_base)
+            h_values.append(h_base)
+
+        # Monotonicity check
+        for i in range(len(episodes) - 1):
+            self.assertLess(n_values[i], n_values[i + 1])
+            self.assertLess(h_values[i], h_values[i + 1])
+
+        # Boundary checks
+        self.assertEqual(round(n_values[0]), 20)
+        self.assertEqual(round(n_values[-1]), 600)
+        self.assertAlmostEqual(h_values[0], 0.40, places=2)
+        self.assertAlmostEqual(h_values[-1], 0.95, places=2)
+
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -110,6 +110,7 @@ class MAPPOTrainer:
         min_evacuees: int = 20,
         max_evacuees: int = 600,
         curriculum: bool = True,
+        num_episodes: int = 100,
     ):
         self.device = torch.device(
             device if device else ("cuda" if torch.cuda.is_available() else "cpu")
@@ -117,6 +118,7 @@ class MAPPOTrainer:
         self.min_evacuees = min_evacuees
         self.max_evacuees = max_evacuees
         self.curriculum = curriculum
+        self.num_episodes = num_episodes
         self.env = env or IndustrialEvacuationEnv(num_evacuees=min_evacuees)
         self.lr = lr
         self.gamma = gamma
@@ -155,32 +157,41 @@ class MAPPOTrainer:
 
     def train_episode(self, episode_idx: int) -> Dict[str, float]:
         """Runs a single episode rollout and performs PPO update."""
-        # 1. 4-Stage Targeted Scenario Curriculum
+        # Continuous Monotonic Curriculum Progression
+        total_eps = max(1, getattr(self, "num_episodes", 100))
+        tau = min(1.0, max(0.0, (episode_idx - 1) / max(1, total_eps - 1)))
+
         if self.curriculum:
-            if episode_idx <= 25:
+            # Pedagogical scenario stages based on normalized progress tau in [0, 1]
+            if tau < 0.25:
                 stage_name = "Stage 1: Primary Arterial Cut"
-                num_evac = random.randint(self.min_evacuees, min(150, self.max_evacuees))
                 target_node = random.choice(["reactor_2", "pipe_rack_junc_1", "pump_house", "corridor_f2_lab"])
-                hazard_type = random.choice(["EXPLOSION", "FIRE"])
-                dual_chance = 0.0
-            elif episode_idx <= 50:
+                hazard_type = random.choice(["FIRE", "GAS_RELEASE"])
+            elif tau < 0.50:
                 stage_name = "Stage 2: Vertical Stairwell Flash"
-                num_evac = random.randint(min(150, self.max_evacuees), min(300, self.max_evacuees))
                 target_node = random.choice(["stair_north_f1", "stair_south_f1", "stair_north_f2", "stair_south_f2"])
                 hazard_type = random.choice(["FIRE", "GAS_RELEASE"])
-                dual_chance = 0.25
-            elif episode_idx <= 75:
+            elif tau < 0.75:
                 stage_name = "Stage 3: Bottleneck Arching & Flow-Splitting"
-                num_evac = random.randint(min(300, self.max_evacuees), min(500, self.max_evacuees))
                 target_node = random.choice(["loading_bay", "tank_farm_a", "tank_farm_b", "hazmat_basin"])
                 hazard_type = random.choice(["CHEMICAL_SPILL", "GAS_RELEASE"])
-                dual_chance = 0.40
             else:
                 stage_name = "Stage 4: Compound Disaster (Stress 600)"
-                num_evac = random.randint(min(400, self.max_evacuees), self.max_evacuees)
-                target_node = random.choice(["reactor_1", "reactor_2", "tank_farm_a", "compressor_shed"])
+                target_node = random.choice(["reactor_1", "reactor_2", "tank_farm_a", "compressor_shed", "hazmat_basin"])
                 hazard_type = random.choice(["EXPLOSION", "CHEMICAL_SPILL", "FIRE"])
-                dual_chance = 0.70
+
+            # Smooth monotonic headcount ramp from min_evacuees to max_evacuees: N(tau) = N_min + (N_max - N_min) * tau^1.15
+            n_base = self.min_evacuees + (self.max_evacuees - self.min_evacuees) * (tau ** 1.15)
+            # Narrow jitter (+/- 4%) prevents discrete overfitting while maintaining monotonic hardness
+            jitter = int(random.uniform(-0.04, 0.04) * n_base)
+            num_evac = int(np.clip(n_base + jitter, self.min_evacuees, self.max_evacuees))
+
+            # Smooth monotonic hazard intensity ramp from 0.40 (mild) to 0.95 (flashover/blast)
+            h_base = 0.40 + 0.55 * tau
+            intensity = float(np.clip(h_base + random.uniform(-0.02, 0.02), 0.35, 0.98))
+
+            # Smooth dual-disaster probability ramp: 0% during initial learning, climbing to 55%
+            dual_chance = 0.0 if tau < 0.35 else min(0.55, (tau - 0.35) * 0.85)
         else:
             stage_name = "Uniform Random Sampling"
             num_evac = random.randint(self.min_evacuees, self.max_evacuees)
@@ -192,9 +203,8 @@ class MAPPOTrainer:
             ]
             target_node = random.choice(candidates)
             hazard_type = random.choice(["GAS_RELEASE", "FIRE", "EXPLOSION", "CHEMICAL_SPILL"])
+            intensity = random.uniform(0.75, 0.98)
             dual_chance = 0.30
-
-        intensity = random.uniform(0.75, 0.98)
 
         obs, infos = self.env.reset(options={
             "num_evacuees": num_evac,
@@ -205,10 +215,12 @@ class MAPPOTrainer:
         })
 
         # Dual disaster injection
+        dual_injected = False
         if random.random() < dual_chance:
             candidates = ["tank_farm_a", "tank_farm_b", "reactor_1", "reactor_2", "hazmat_basin", "loading_bay"]
             sec_target = random.choice([c for c in candidates if c != target_node])
             self.env.sim.inject_disaster(sec_target, random.choice(["FIRE", "GAS_RELEASE"]), random.uniform(0.65, 0.85))
+            dual_injected = True
 
         self.buffer.clear()
 
@@ -294,6 +306,10 @@ class MAPPOTrainer:
             "casualties": metrics["casualties"],
             "survival_rate": round(survival_rate, 1),
             "sim_time": metrics["sim_time"],
+            "stage_name": stage_name,
+            "hazard_type": hazard_type,
+            "intensity": intensity,
+            "dual": dual_injected,
             **update_metrics,
         }
 
@@ -365,6 +381,7 @@ class MAPPOTrainer:
         }
 
     def train(self, num_episodes: int = 50, eval_interval: int = 10):
+        self.num_episodes = num_episodes
         os.makedirs(self.save_dir, exist_ok=True)
         print("\n" + "=" * 80)
         print(f"🚀 STARTING ST-TBA-GAT MAPPO TRAINING")
@@ -386,13 +403,20 @@ class MAPPOTrainer:
             sim_t = metrics.get("sim_time", 0.0)
             in_transit = max(0, total - evac - cas)
 
+            stage_str = metrics.get("stage_name", "Curriculum").split(":")[0]
+            haz_str = metrics.get("hazard_type", "HAZ")[:4]
+            int_val = metrics.get("intensity", 0.0)
+            dual_str = "+D" if metrics.get("dual", False) else "  "
+
             print(
-                f"Ep {ep:3d}/{num_episodes:3d} | "
-                f"Total: {total:3d} (Evac: {evac:3d}, Cas: {cas:2d}, In-Transit: {in_transit:2d}) | "
+                f"Ep {ep:3d}/{num_episodes:3d} [{stage_str}] | "
+                f"N: {total:3d} | "
+                f"Haz: {haz_str}{dual_str} ({int_val:.2f}) | "
+                f"Evac: {evac:3d} | Cas: {cas:2d} | In-Trans: {in_transit:2d} | "
                 f"Surv: {surv:5.1f}% | "
-                f"EgressSim: {sim_t:4.1f}s | "
-                f"TrainWallTime: {dt:.2f}s | "
-                f"Reward: {rew:6.2f} | "
+                f"Sim: {sim_t:4.1f}s | "
+                f"Wall: {dt:4.1f}s | "
+                f"R: {rew:6.2f} | "
                 f"Loss: (π={metrics['pi_loss']:.3f}, V={metrics['v_loss']:.3f})"
             )
 
