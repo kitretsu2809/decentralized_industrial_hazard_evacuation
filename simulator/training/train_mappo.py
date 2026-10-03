@@ -155,22 +155,45 @@ class MAPPOTrainer:
 
     def train_episode(self, episode_idx: int) -> Dict[str, float]:
         """Runs a single episode rollout and performs PPO update."""
-        # 1. Vary crowd density across [min_evacuees, max_evacuees] (20 to 600)
+        # 1. 4-Stage Targeted Scenario Curriculum
         if self.curriculum:
-            max_curr = int(self.min_evacuees + (self.max_evacuees - self.min_evacuees) * min(1.0, episode_idx / 40.0))
-            num_evac = random.randint(self.min_evacuees, max(self.min_evacuees + 1, max_curr))
+            if episode_idx <= 25:
+                stage_name = "Stage 1: Primary Arterial Cut"
+                num_evac = random.randint(self.min_evacuees, min(150, self.max_evacuees))
+                target_node = random.choice(["reactor_2", "pipe_rack_junc_1", "pump_house", "corridor_f2_lab"])
+                hazard_type = random.choice(["EXPLOSION", "FIRE"])
+                dual_chance = 0.0
+            elif episode_idx <= 50:
+                stage_name = "Stage 2: Vertical Stairwell Flash"
+                num_evac = random.randint(min(150, self.max_evacuees), min(300, self.max_evacuees))
+                target_node = random.choice(["stair_north_f1", "stair_south_f1", "stair_north_f2", "stair_south_f2"])
+                hazard_type = random.choice(["FIRE", "GAS_RELEASE"])
+                dual_chance = 0.25
+            elif episode_idx <= 75:
+                stage_name = "Stage 3: Bottleneck Arching & Flow-Splitting"
+                num_evac = random.randint(min(300, self.max_evacuees), min(500, self.max_evacuees))
+                target_node = random.choice(["loading_bay", "tank_farm_a", "tank_farm_b", "hazmat_basin"])
+                hazard_type = random.choice(["CHEMICAL_SPILL", "GAS_RELEASE"])
+                dual_chance = 0.40
+            else:
+                stage_name = "Stage 4: Compound Disaster (Stress 600)"
+                num_evac = random.randint(min(400, self.max_evacuees), self.max_evacuees)
+                target_node = random.choice(["reactor_1", "reactor_2", "tank_farm_a", "compressor_shed"])
+                hazard_type = random.choice(["EXPLOSION", "CHEMICAL_SPILL", "FIRE"])
+                dual_chance = 0.70
         else:
+            stage_name = "Uniform Random Sampling"
             num_evac = random.randint(self.min_evacuees, self.max_evacuees)
+            candidates = [
+                "tank_farm_a", "tank_farm_b", "reactor_1", "reactor_2",
+                "hazmat_basin", "compressor_shed", "pipe_rack_junc_1", "pipe_rack_junc_2",
+                "loading_bay", "pump_house", "corridor_f2_lab", "corridor_f3_mech",
+                "stair_north_f1", "stair_south_f1"
+            ]
+            target_node = random.choice(candidates)
+            hazard_type = random.choice(["GAS_RELEASE", "FIRE", "EXPLOSION", "CHEMICAL_SPILL"])
+            dual_chance = 0.30
 
-        # 2. Comprehensive scenario sampling across all floors & disaster types
-        candidates = [
-            "tank_farm_a", "tank_farm_b", "reactor_1", "reactor_2",
-            "hazmat_basin", "compressor_shed", "pipe_rack_junc_1", "pipe_rack_junc_2",
-            "loading_bay", "pump_house", "corridor_f2_lab", "corridor_f3_mech",
-            "stair_north_f1", "stair_south_f1"
-        ]
-        target_node = random.choice(candidates)
-        hazard_type = random.choice(["GAS_RELEASE", "FIRE", "EXPLOSION", "CHEMICAL_SPILL"])
         intensity = random.uniform(0.75, 0.98)
 
         obs, infos = self.env.reset(options={
@@ -181,8 +204,9 @@ class MAPPOTrainer:
             "inject": True,
         })
 
-        # Dual disaster injection in 30% of episodes
-        if random.random() < 0.30:
+        # Dual disaster injection
+        if random.random() < dual_chance:
+            candidates = ["tank_farm_a", "tank_farm_b", "reactor_1", "reactor_2", "hazmat_basin", "loading_bay"]
             sec_target = random.choice([c for c in candidates if c != target_node])
             self.env.sim.inject_disaster(sec_target, random.choice(["FIRE", "GAS_RELEASE"]), random.uniform(0.65, 0.85))
 
