@@ -42,6 +42,7 @@ class IndustrialEvacuationEnv(ParallelEnv):
     ):
         super().__init__()
         self.num_evacuees = num_evacuees
+        self.max_sim_time = max(120.0, 90.0 + 0.15 * num_evacuees)
         self.random_disasters = random_disasters
         self.sim = Simulation()
         self.sim.num_evacuees = num_evacuees
@@ -124,6 +125,8 @@ class IndustrialEvacuationEnv(ParallelEnv):
 
         opts = options or {}
         num_evac = opts.get("num_evacuees", self.num_evacuees)
+        self.num_evacuees = num_evac
+        self.max_sim_time = max(120.0, 90.0 + 0.15 * num_evac)
         self.sim.reset(num_evacuees=num_evac)
         self.sim.set_policy_mode(opts.get("policy_mode", "marl"))
 
@@ -181,7 +184,7 @@ class IndustrialEvacuationEnv(ParallelEnv):
             # 4-byte sparse gossip differentials: Delta H, Delta rho
             delta_h = h - self.last_hazards.get(agent, 0.0)
             delta_rho = rho - self.last_crowds.get(agent, 0.0)
-            time_ratio = min(1.0, self.sim.t / self.MAX_SIM_TIME)
+            time_ratio = min(1.0, self.sim.t / max(1.0, self.max_sim_time))
             alarm_flag = 1.0 if self.sim.alarm_active else 0.0
 
             vec = [
@@ -299,7 +302,7 @@ class IndustrialEvacuationEnv(ParallelEnv):
         # Check termination / truncation
         total_finished = evac_now + cas_now
         is_terminated = (total_finished >= self.sim.num_evacuees)
-        is_truncated = (self.sim.t >= self.MAX_SIM_TIME)
+        is_truncated = (self.sim.t >= self.max_sim_time)
 
         terminations = {agent: is_terminated for agent in self.agents}
         truncations = {agent: is_truncated for agent in self.agents}
