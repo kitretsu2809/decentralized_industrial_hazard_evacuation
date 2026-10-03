@@ -83,10 +83,11 @@ class IndustrialEvacuationEnv(ParallelEnv):
             for agent in self.possible_agents
         }
 
-        # Reward weights
+        # Scale-Invariant Life-Safety Reward Weights (Normalized by total headcount N)
         self.weights = reward_weights or {
-            "evac": 2.0,      # Reward per successfully evacuated worker
-            "cas": 5.0,       # Penalty per casualty
+            "evac": 100.0,    # Scale-invariant reward: 100.0 * (delta_evac / N_total)
+            "cas": 500.0,     # Dominant life-safety penalty: 500.0 * (delta_cas / N_total)
+            "cas_flat": 5.0,  # Zero-tolerance penalty on any step where casualties occur
             "cong": 0.5,      # Penalty on corridor density variance
             "flip": 0.05,     # Penalty on rapid signage flickering
         }
@@ -278,10 +279,17 @@ class IndustrialEvacuationEnv(ParallelEnv):
         ]
         cong_penalty = float(np.var(active_counts)) / (self.sim.num_evacuees ** 2 + 1e-6)
 
+        # Scale-invariant normalization across crowd density N in [20, 600]
+        n_total = max(1, self.sim.num_evacuees)
+        prop_evac = float(delta_evac) / n_total
+        prop_cas = float(delta_cas) / n_total
+        flat_cas_penalty = self.weights.get("cas_flat", 5.0) if delta_cas > 0 else 0.0
+
         # Team reward shared equally across all edge router agents
         team_reward = (
-            self.weights["evac"] * float(delta_evac)
-            - self.weights["cas"] * float(delta_cas)
+            self.weights["evac"] * prop_evac
+            - self.weights["cas"] * prop_cas
+            - flat_cas_penalty
             - self.weights["cong"] * cong_penalty
             - self.weights["flip"] * (flipping_penalty / max(1, len(self.agents) * self.MAX_CORRIDORS))
         )
