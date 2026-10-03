@@ -107,6 +107,7 @@ class SocialForceModel:
                     target_floor = self.node_floors.get(target_id, agent.floor)
                     if target_floor != agent.floor:
                         agent.floor = target_floor
+                        agent.prev_node = agent.current_node
                         agent.current_node = target_id
                         agent.path = agent.path[1:]
                         tx_, ty_ = self.node_positions.get(target_id, (agent.x, agent.y))
@@ -117,6 +118,7 @@ class SocialForceModel:
                     tx_, ty_ = self.node_positions.get(target_id, (px[i], py[i]))
                     d_target = math.hypot(tx_ - px[i], ty_ - py[i])
                     if d_target < 1.0: # Reached node!
+                        agent.prev_node = agent.current_node
                         agent.current_node = target_id
                         agent.path = agent.path[1:]
                         if not agent.path:
@@ -125,6 +127,7 @@ class SocialForceModel:
                         next_floor = self.node_floors.get(next_id, agent.floor)
                         if next_floor != agent.floor:
                             agent.floor = next_floor
+                            agent.prev_node = agent.current_node
                             agent.current_node = next_id
                             agent.path = agent.path[1:]
                             nx_, ny_ = self.node_positions.get(next_id, (agent.x, agent.y))

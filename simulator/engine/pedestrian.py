@@ -32,6 +32,7 @@ class Pedestrian:
     state: PedestrianState = PedestrianState.NORMAL
     path: List[str] = field(default_factory=list)   # remaining node waypoints
     current_node: str = ""       # node the agent is currently at / last passed
+    prev_node: str = ""          # previous node the agent just departed from
     target_node: str = ""        # immediate next node
     desired_speed: float = 1.34  # free-flow egress speed m/s (Weidmann 1992)
     reroute_cooldown: float = 0.0
