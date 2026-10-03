@@ -232,22 +232,21 @@ def render_pane(draw, renderer, env, agents, hazards):
         draw.ellipse([(px - r, py - r), (px + r, py + r)], fill=rgb, outline=(0, 0, 0))
 
 
-def export_video(seed: int = 42, output_path: str = "assets/demo_presentation.mp4", max_steps: int = 80):
+def export_video(seed: int = 42, output_path: str = "assets/demo_presentation.mp4", max_steps: int = 80, checkpoint_path: str = "checkpoints/best_policy.pt", num_pedestrians: int = 150):
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
     width, height = 1920, 1080
 
-    print(f"[Video Exporter] Initializing simulation environment (Seed {seed})...")
-    env = EvacuationParallelEnv(num_pedestrians=60, max_steps=max_steps, dt=1.0)
+    print(f"[Video Exporter] Initializing simulation environment (Seed {seed}, Evacuees {num_pedestrians})...")
+    env = EvacuationParallelEnv(num_pedestrians=num_pedestrians, max_steps=max_steps, dt=1.0)
 
     # Load GAT policy if available
     policy = PermutationInvariantGATPolicy(node_dim=5, edge_dim=3, hidden_dim=64, max_corridors=6, heads=4)
-    checkpoint_path = "checkpoints/best_policy.pt"
     if os.path.exists(checkpoint_path):
         try:
             policy.load_state_dict(torch.load(checkpoint_path, map_location='cpu'))
-            print("[Video Exporter] Loaded GAT policy from checkpoints/best_policy.pt")
-        except Exception:
-            pass
+            print(f"[Video Exporter] Loaded GAT policy from {checkpoint_path}")
+        except Exception as e:
+            print(f"[Video Exporter] Warning loading checkpoint: {e}")
     policy.eval()
 
     print("[Video Exporter] Running Left Pane (NFPA Static Baseline)...")
@@ -263,6 +262,7 @@ def export_video(seed: int = 42, output_path: str = "assets/demo_presentation.mp
     substeps = 6
     interp_left = renderer_left.interpolate_pedestrian_trajectories(left_hist, num_substeps=substeps)
     interp_right = renderer_right.interpolate_pedestrian_trajectories(right_hist, num_substeps=substeps)
+
 
     total_frames = min(len(interp_left), len(interp_right))
     print(f"[Video Exporter] Generating {total_frames} 1080p 60 FPS frames via ffmpeg pipe...")
@@ -333,6 +333,9 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--output", type=str, default="assets/demo_presentation.mp4", help="Output MP4 file path")
     parser.add_argument("--steps", type=int, default=70, help="Simulation duration in seconds")
+    parser.add_argument("--checkpoint", type=str, default="checkpoints/best_policy.pt", help="Path to trained GAT model checkpoint")
+    parser.add_argument("--pedestrians", type=int, default=150, help="Total crowd count N (e.g. 50, 150, 300, 600)")
     args = parser.parse_args()
 
-    export_video(seed=args.seed, output_path=args.output, max_steps=args.steps)
+    export_video(seed=args.seed, output_path=args.output, max_steps=args.steps, checkpoint_path=args.checkpoint, num_pedestrians=args.pedestrians)
+
