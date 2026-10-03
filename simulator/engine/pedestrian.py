@@ -65,15 +65,17 @@ class Pedestrian:
 
     def to_dict(self) -> dict:
         return {
-            "id":    self.id,
-            "x":     round(self.x, 2),
-            "y":     round(self.y, 2),
-            "floor": self.floor,
-            "vx":    round(self.vx, 2),
-            "vy":    round(self.vy, 2),
-            "state": self.state.value,
-            "color": self.color(),
-            "path":  self.path[:3],   # only next 3 waypoints for bandwidth
+            "id":           self.id,
+            "x":            round(self.x, 2),
+            "y":            round(self.y, 2),
+            "floor":        self.floor,
+            "vx":           round(self.vx, 2),
+            "vy":           round(self.vy, 2),
+            "state":        self.state.value,
+            "color":        self.color(),
+            "current_node": self.current_node,
+            "target_node":  self.path[0] if self.path else "",
+            "path":         self.path[:3],   # only next 3 waypoints for bandwidth
         }
 
 

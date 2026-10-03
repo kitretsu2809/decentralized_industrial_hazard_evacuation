@@ -873,7 +873,7 @@ function showSignTooltip(cx, cy, signItem) {
   hzEl.style.color = hz > 0.4 ? "var(--red)" : hz > 0.15 ? "var(--orange)" : "var(--text-muted)";
 
   const occ = lastState
-    ? lastState.pedestrians.filter(a => a.current_node === u.id && a.floor === currentFloor).length
+    ? lastState.pedestrians.filter(a => a.current_node === u.id && a.floor === currentFloor && a.state !== "evacuated" && a.state !== "casualty").length
     : 0;
   document.getElementById("tt-occupancy").textContent = `${occ} persons at controller`;
 
@@ -909,7 +909,7 @@ function showTooltip(cx, cy, node) {
 
   const hz  = lastState ? (lastState.hazards[node.id] || null) : null;
   const occ = lastState
-    ? lastState.pedestrians.filter(a => a.current_node === node.id && a.floor === currentFloor).length
+    ? lastState.pedestrians.filter(a => a.current_node === node.id && a.floor === currentFloor && a.state !== "evacuated" && a.state !== "casualty").length
     : 0;
   document.getElementById("tt-name").textContent      = node.id.replace(/_/g, " ");
   document.getElementById("tt-type").textContent      = node.type;
