@@ -345,9 +345,13 @@ class ST_TBA_GAT(nn.Module):
         else:
             log_probs = log_probs.sum(dim=-1)
 
-        if apply_reflexive and neighbor_hazards is not None:
-            # Extract hazard score (feature index 0)
+        if apply_reflexive:
             local_hazards = node_features[:, 0]
+            if neighbor_hazards is None:
+                if node_features.shape[-1] >= 10 + self.max_corridors * 4:
+                    neighbor_hazards = node_features[:, 10::4][:, :self.max_corridors]
+                else:
+                    neighbor_hazards = torch.zeros(node_features.size(0), self.max_corridors, device=node_features.device)
             actions = ReflexiveSafetyOverride.apply(
                 raw_actions, local_hazards, neighbor_hazards
             )
