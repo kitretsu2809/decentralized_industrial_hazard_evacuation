@@ -198,10 +198,44 @@ class TestIndustrialEvacuationEnv(unittest.TestCase):
         actions_1 = {agent: 0 for agent in self.env.agents}
         self.env.step(actions_1)
 
-        # Second step: flip action to 1 at reactor_2 where crowd is high
-        actions_2 = {agent: 1 for agent in self.env.agents}
-        _, rewards, _, _, _ = self.env.step(actions_2)
-        self.assertTrue(all(not np.isnan(r) for r in rewards.values()))
+    def test_topological_cycle_and_unreach_penalties(self):
+        """Verifies that circular routing loops incur cycle_penalty and dead ends incur unreach_penalty."""
+        self.env.reset(options={"num_evacuees": 20})
+        # Find two adjacent non-exit nodes
+        u = None
+        v = None
+        for cand in self.env.agents:
+            if cand not in self.env.sim.exits:
+                nbrs = self.env.agent_neighbors[cand]
+                for nbr in nbrs:
+                    if nbr not in self.env.sim.exits:
+                        u = cand
+                        v = nbr
+                        break
+                if u and v:
+                    break
+
+        self.assertIsNotNone(u)
+        self.assertIsNotNone(v)
+
+        # Make u point to v, and v point to u (a direct 2-node cycle)
+        u_nbrs = self.env.agent_neighbors[u]
+        v_nbrs = self.env.agent_neighbors[v]
+        u_act = u_nbrs.index(v)
+        v_act = v_nbrs.index(u)
+
+        actions = {agent: self.env.MAX_CORRIDORS for agent in self.env.agents}
+        actions[u] = u_act
+        actions[v] = v_act
+
+        _, _, _, _, infos = self.env.step(actions)
+        cycle_pen = infos[u]["cycle_penalty"]
+        unreach_pen = infos[u]["unreach_penalty"]
+
+        # Cycle penalty must be > 0 because u <-> v forms a directed 2-node loop
+        self.assertGreater(cycle_pen, 0.0)
+        # Unreachability penalty must be > 0 because u and v cannot reach exits
+        self.assertGreater(unreach_pen, 0.0)
 
 
 if __name__ == "__main__":

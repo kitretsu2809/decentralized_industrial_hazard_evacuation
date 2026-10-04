@@ -34,7 +34,6 @@ class Pedestrian:
     current_node: str = ""       # node the agent is currently at / last passed
     prev_node: str = ""          # previous node the agent just departed from
     target_node: str = ""        # immediate next node
-    recent_nodes: List[str] = field(default_factory=list) # FIFO history of recently visited nodes
     desired_speed: float = 1.34  # free-flow egress speed m/s (Weidmann 1992)
     reroute_cooldown: float = 0.0
     age: float = 0.0             # simulation time this agent has existed

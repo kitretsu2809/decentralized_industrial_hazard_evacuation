@@ -10,6 +10,7 @@ import random
 from typing import Dict, List, Tuple, Optional, Any
 
 import numpy as np
+import networkx as nx
 import gymnasium
 from gymnasium.spaces import Box, MultiDiscrete
 from pettingzoo import ParallelEnv
@@ -96,6 +97,8 @@ class IndustrialEvacuationEnv(ParallelEnv):
             "flip": 1.0,       # Penalty on gratuitous signboard changes
             "cong": 0.5,       # Spatial density variance penalty
             "jam": 5.0,        # Doorway arching & local jamming density penalty
+            "cycle": 15.0,     # Graph-level penalty for closed routing cycles
+            "unreach": 10.0,   # Graph-level penalty for nodes with no path to exits
         }
 
         # Episode state tracking
@@ -366,6 +369,36 @@ class IndustrialEvacuationEnv(ParallelEnv):
         # Watchdog trapped penalty: heavily penalizes leaving anyone behind if watchdog timeout expires
         trapped_penalty = (self.weights["cas"] * (float(in_transit) / float(n_total))) if is_truncated and in_transit > 0 else 0.0
 
+        # Graph-level Topological Cycle & Reachability Analysis
+        G_arrow = nx.DiGraph()
+        G_arrow.add_nodes_from(self.agents)
+        for agent, act_vec in safe_actions.items():
+            if agent in self.sim.exits:
+                continue
+            nbrs = self.agent_neighbors.get(agent, [])
+            for k, code in enumerate(act_vec):
+                if code == 3 and k < len(nbrs):  # GREEN ARROW
+                    nbr = nbrs[k]
+                    if self.sim.hazard.levels.get(agent, 0.0) < 0.80 and self.sim.hazard.levels.get(nbr, 0.0) < 0.80:
+                        G_arrow.add_edge(agent, nbr)
+
+        # Detect circular routing loops (directed cycles)
+        cycle_nodes = set()
+        for cyc in nx.simple_cycles(G_arrow):
+            cycle_nodes.update(cyc)
+        cycle_penalty = float(len(cycle_nodes)) / float(max(1, len(self.agents)))
+
+        # Detect non-exit nodes with no directed path to any perimeter exit
+        G_rev = G_arrow.reverse()
+        reachable_from_exits = set()
+        for ex in self.sim.exits:
+            if ex in G_rev:
+                reachable_from_exits.update(nx.descendants(G_rev, ex))
+                reachable_from_exits.add(ex)
+        non_exits = set(self.agents) - set(self.sim.exits)
+        unreachable_nodes = non_exits - reachable_from_exits
+        unreach_penalty = float(len(unreachable_nodes)) / float(max(1, len(non_exits)))
+
         # Team reward shared equally across all edge router agents
         team_reward = (
             self.weights["evac"] * prop_evac
@@ -374,6 +407,8 @@ class IndustrialEvacuationEnv(ParallelEnv):
             - self.weights["cong"] * cong_penalty
             - self.weights.get("jam", 5.0) * jamming_penalty
             - self.weights["flip"] * (flipping_penalty / max(1, len(self.agents)))
+            - self.weights.get("cycle", 15.0) * cycle_penalty
+            - self.weights.get("unreach", 10.0) * unreach_penalty
             - urgency_penalty
             - trapped_penalty
         )
@@ -392,6 +427,8 @@ class IndustrialEvacuationEnv(ParallelEnv):
                 "sim_time": self.sim.t,
                 "progress_reward": r_progress,
                 "safety_interventions": safety_interventions,
+                "cycle_penalty": cycle_penalty,
+                "unreach_penalty": unreach_penalty,
             }
             for agent in self.agents
         }

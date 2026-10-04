@@ -252,14 +252,13 @@ class Simulation:
         floor: int,
         agent_id: int = 0,
         prev_node: str = "",
-        recent_nodes: Optional[List[str]] = None,
     ) -> Optional[str]:
         """
         Determines the immediate next hop waypoint for a pedestrian at current_node.
         In MARL mode: Strictly queries the local signboard directional arrow.
         In Static mode: Follows fixed geometric exit signs.
         In Dijkstra mode: Follows centralized server shortest safe path.
-        Includes anti-oscillation loop detection to prevent 2/3/4-node cyclic traps.
+        Evacuees strictly obey local illuminated physical signboards.
         """
         if not current_node or current_node in self.exits:
             return None
@@ -302,34 +301,21 @@ class Simulation:
                 else:
                     normal_corridors.append(nbr)
 
-            recent = [n for n in (recent_nodes[-4:] if recent_nodes else []) if n != current_node]
+            # 1. Prioritize designated green arrow corridors moving forward (away from prev_node)
+            forward_green = [nbr for nbr in green_corridors if nbr != prev_node]
+            chosen_green = forward_green if forward_green else green_corridors
 
-            # 1. Prioritize designated green arrow corridors moving forward (away from prev_node and unvisited)
-            forward_green = [nbr for nbr in green_corridors if nbr != prev_node and nbr not in recent]
-            if not forward_green:
-                forward_green = [nbr for nbr in green_corridors if nbr != prev_node]
-
-            if forward_green:
-                for nbr in forward_green:
+            if chosen_green:
+                for nbr in chosen_green:
                     if nbr in self.exits:
                         return nbr
 
                 # Dynamic Flow Splitting:
                 # If multiple green corridors are designated, partition arriving evacuees proportionally
-                if len(forward_green) > 1:
-                    return forward_green[agent_id % len(forward_green)]
+                if len(chosen_green) > 1:
+                    return chosen_green[agent_id % len(chosen_green)]
 
-                primary = forward_green[0]
-
-                # Anti-oscillation: If primary was recently visited (looping), divert to an unvisited safe alternative
-                if primary in recent:
-                    unvisited_alts = [
-                        nbr for nbr in (normal_corridors + amber_corridors)
-                        if nbr != prev_node and nbr not in recent and self.hazard.levels.get(nbr, 0.0) < 0.50
-                    ]
-                    if unvisited_alts:
-                        unvisited_alts.sort(key=lambda x: self.static_exit_dists.get(x, 100.0))
-                        return unvisited_alts[0]
+                primary = chosen_green[0]
 
                 # Check downstream bottleneck crowding at primary corridor
                 primary_cap = max(1, self.node_capacities.get(primary, 10))
@@ -351,12 +337,8 @@ class Simulation:
 
                 return primary
 
-            # 2. If green arrow is absent or points backward/into recent loop,
-            # advance along forward open corridors with anti-oscillation
-            forward_open = [nbr for nbr in (normal_corridors + amber_corridors) if nbr != prev_node and nbr not in recent]
-            if not forward_open:
-                forward_open = [nbr for nbr in (normal_corridors + amber_corridors) if nbr != prev_node]
-
+            # 2. If green arrow is absent, advance along forward open corridors
+            forward_open = [nbr for nbr in (normal_corridors + amber_corridors) if nbr != prev_node]
             if forward_open:
                 for nbr in forward_open:
                     if nbr in self.exits:
@@ -544,7 +526,6 @@ class Simulation:
                         next_hop = self.get_next_waypoint(
                             src, agent.floor, agent.id,
                             prev_node=getattr(agent, "prev_node", ""),
-                            recent_nodes=getattr(agent, "recent_nodes", []),
                         )
                         if next_hop:
                             agent.current_node = src
@@ -555,7 +536,6 @@ class Simulation:
                     next_hop = self.get_next_waypoint(
                         src, agent.floor, agent.id,
                         prev_node=getattr(agent, "prev_node", ""),
-                        recent_nodes=getattr(agent, "recent_nodes", []),
                     )
                     if next_hop:
                         agent.current_node = src
@@ -598,7 +578,6 @@ class Simulation:
                     next_hop = self.get_next_waypoint(
                         src, agent.floor, agent.id,
                         prev_node=getattr(agent, "prev_node", ""),
-                        recent_nodes=getattr(agent, "recent_nodes", []),
                     )
                     if next_hop:
                         agent.path = [next_hop]
@@ -624,7 +603,6 @@ class Simulation:
                     next_hop = self.get_next_waypoint(
                         src, agent.floor, agent.id,
                         prev_node=getattr(agent, "prev_node", ""),
-                        recent_nodes=getattr(agent, "recent_nodes", []),
                     )
                     if next_hop:
                         agent.path = [next_hop]
@@ -635,7 +613,6 @@ class Simulation:
                     next_hop = self.get_next_waypoint(
                         src, agent.floor, agent.id,
                         prev_node=getattr(agent, "prev_node", ""),
-                        recent_nodes=getattr(agent, "recent_nodes", []),
                     )
                     if next_hop:
                         agent.path = [next_hop]
@@ -650,7 +627,6 @@ class Simulation:
         for agent in self.agents:
             agent.state = PedestrianState.NORMAL
             agent.path = []
-            agent.recent_nodes = [agent.current_node] if agent.current_node else []
 
     # ── Direct ST-TBA-GAT inference and serialisation ─────────────────────────
     def _policy_features(self):
