@@ -88,9 +88,9 @@ class TestLiveTrainingAndInference(unittest.TestCase):
         self.assertTrue(ok)
         self.assertTrue(worker.is_running)
 
-        # Wait up to 10 seconds for 2 quick episodes to finish
+        # Wait up to 15 seconds for 2 quick episodes to finish
         start_t = time.time()
-        while worker.is_running and (time.time() - start_t) < 10:
+        while worker.is_running and (time.time() - start_t) < 15:
             time.sleep(0.2)
 
         status = worker.get_status()

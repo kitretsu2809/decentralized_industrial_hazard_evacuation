@@ -1,16 +1,20 @@
 #!/bin/bash
-# Start ST-TBA-GAT Industrial Evacuation Training & Benchmark
+# Train the production four-state ST-TBA-GAT policy used by simulator/.
+# Existing legacy checkpoints are preserved; a completed directional policy is
+# automatically selected by the simulator on its next start.
 set -e
 
-PYTHON_EXEC="/home/kitretsu/miniconda3/envs/ct_pipeline/bin/python"
+PYTHON_EXEC="${PYTHON_EXEC:-/home/kitretsu/miniconda3/envs/ct_pipeline/bin/python}"
+SAVE_DIR="${ST_TBA_GAT_SAVE_DIR:-checkpoints/directional}"
 
 if [ -f "$PYTHON_EXEC" ]; then
     echo "=========================================================="
-    echo "Starting ST-TBA-GAT PPO Training (Python / CUDA)..."
+    echo "Starting four-state direct-signboard ST-TBA-GAT MAPPO training..."
+    echo "Checkpoints: $SAVE_DIR"
     echo "=========================================================="
-    PYTHONPATH=. "$PYTHON_EXEC" sim/services/training/src/train.py "$@"
+    PYTHONPATH=. "$PYTHON_EXEC" simulator/training/train_mappo.py --save-dir "$SAVE_DIR" "$@"
 else
-    echo "Starting LBP Training via Docker Compose..."
-    docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile train up -d
-    echo "Training started. Monitor with: docker compose logs -f training"
+    echo "Python environment not found: $PYTHON_EXEC" >&2
+    echo "Create the documented environment or set PYTHON_EXEC before running this script." >&2
+    exit 1
 fi

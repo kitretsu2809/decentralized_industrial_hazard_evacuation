@@ -1,0 +1,1 @@
+from agents.gat_policy import PermutationInvariantGATPolicy
