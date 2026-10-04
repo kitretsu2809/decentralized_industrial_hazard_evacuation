@@ -246,12 +246,20 @@ class Simulation:
         }
         self._externally_controlled_signboards = externally_controlled
 
-    def get_next_waypoint(self, current_node: str, floor: int, agent_id: int = 0, prev_node: str = "") -> Optional[str]:
+    def get_next_waypoint(
+        self,
+        current_node: str,
+        floor: int,
+        agent_id: int = 0,
+        prev_node: str = "",
+        recent_nodes: Optional[List[str]] = None,
+    ) -> Optional[str]:
         """
         Determines the immediate next hop waypoint for a pedestrian at current_node.
         In MARL mode: Strictly queries the local signboard directional arrow.
         In Static mode: Follows fixed geometric exit signs.
         In Dijkstra mode: Follows centralized server shortest safe path.
+        Includes anti-oscillation loop detection to prevent 2/3/4-node cyclic traps.
         """
         if not current_node or current_node in self.exits:
             return None
@@ -259,6 +267,11 @@ class Simulation:
         nbrs = self.agent_neighbors.get(current_node, [])
         if not nbrs:
             return None
+
+        # Immediate exit check: if an unblocked exit is directly adjacent, take it!
+        for nbr in nbrs:
+            if nbr in self.exits and self.hazard.levels.get(nbr, 0.0) < 0.80 and nbr not in self.hazard.blocked:
+                return nbr
 
         # ── 1. MARL MODE: Local Signboard Guidance (Hop-by-Hop) ──────────
         if self.policy_mode == "marl":
@@ -281,9 +294,7 @@ class Simulation:
                 if is_blocked:
                     continue  # Red X: impassable barrier
 
-                # GREEN_ARROW is the controller's direct route command.  No shortest
-                # path cost, exit-distance field, or central graph search participates
-                # in this choice.
+                # GREEN_ARROW is the controller's direct route command.
                 if act_code == 3:
                     green_corridors.append(nbr)
                 elif act_code == 1:
@@ -291,8 +302,13 @@ class Simulation:
                 else:
                     normal_corridors.append(nbr)
 
-            # 1. Prioritize designated green arrow corridors moving forward (away from prev_node)
-            forward_green = [nbr for nbr in green_corridors if nbr != prev_node]
+            recent = [n for n in (recent_nodes[-4:] if recent_nodes else []) if n != current_node]
+
+            # 1. Prioritize designated green arrow corridors moving forward (away from prev_node and unvisited)
+            forward_green = [nbr for nbr in green_corridors if nbr != prev_node and nbr not in recent]
+            if not forward_green:
+                forward_green = [nbr for nbr in green_corridors if nbr != prev_node]
+
             if forward_green:
                 for nbr in forward_green:
                     if nbr in self.exits:
@@ -304,6 +320,17 @@ class Simulation:
                     return forward_green[agent_id % len(forward_green)]
 
                 primary = forward_green[0]
+
+                # Anti-oscillation: If primary was recently visited (looping), divert to an unvisited safe alternative
+                if primary in recent:
+                    unvisited_alts = [
+                        nbr for nbr in (normal_corridors + amber_corridors)
+                        if nbr != prev_node and nbr not in recent and self.hazard.levels.get(nbr, 0.0) < 0.50
+                    ]
+                    if unvisited_alts:
+                        unvisited_alts.sort(key=lambda x: self.static_exit_dists.get(x, 100.0))
+                        return unvisited_alts[0]
+
                 # Check downstream bottleneck crowding at primary corridor
                 primary_cap = max(1, self.node_capacities.get(primary, 10))
                 primary_occ = 0
@@ -324,9 +351,12 @@ class Simulation:
 
                 return primary
 
-            # 2. If green arrow is absent or points backward to prev_node,
-            # advance along forward open corridors with flow splitting
-            forward_open = [nbr for nbr in (normal_corridors + amber_corridors) if nbr != prev_node]
+            # 2. If green arrow is absent or points backward/into recent loop,
+            # advance along forward open corridors with anti-oscillation
+            forward_open = [nbr for nbr in (normal_corridors + amber_corridors) if nbr != prev_node and nbr not in recent]
+            if not forward_open:
+                forward_open = [nbr for nbr in (normal_corridors + amber_corridors) if nbr != prev_node]
+
             if forward_open:
                 for nbr in forward_open:
                     if nbr in self.exits:
@@ -511,14 +541,22 @@ class Simulation:
                         agent.state = PedestrianState.REROUTING
                     else:
                         src = _nearest_node(agent.x, agent.y, self.node_positions, self.node_floors, agent.floor)
-                        next_hop = self.get_next_waypoint(src, agent.floor, agent.id, prev_node=getattr(agent, "prev_node", ""))
+                        next_hop = self.get_next_waypoint(
+                            src, agent.floor, agent.id,
+                            prev_node=getattr(agent, "prev_node", ""),
+                            recent_nodes=getattr(agent, "recent_nodes", []),
+                        )
                         if next_hop:
                             agent.current_node = src
                             agent.path = [next_hop]
                             agent.state = PedestrianState.MOVING
                 elif not agent.path:
                     src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, self.node_floors, agent.floor)
-                    next_hop = self.get_next_waypoint(src, agent.floor, agent.id, prev_node=getattr(agent, "prev_node", ""))
+                    next_hop = self.get_next_waypoint(
+                        src, agent.floor, agent.id,
+                        prev_node=getattr(agent, "prev_node", ""),
+                        recent_nodes=getattr(agent, "recent_nodes", []),
+                    )
                     if next_hop:
                         agent.current_node = src
                         agent.path = [next_hop]
@@ -557,7 +595,11 @@ class Simulation:
                 agent.state = PedestrianState.DANGER
                 if not agent.path:
                     src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, self.node_floors, agent.floor)
-                    next_hop = self.get_next_waypoint(src, agent.floor, agent.id, prev_node=getattr(agent, "prev_node", ""))
+                    next_hop = self.get_next_waypoint(
+                        src, agent.floor, agent.id,
+                        prev_node=getattr(agent, "prev_node", ""),
+                        recent_nodes=getattr(agent, "recent_nodes", []),
+                    )
                     if next_hop:
                         agent.path = [next_hop]
                 continue
@@ -579,14 +621,22 @@ class Simulation:
                 if agent.reaction_delay <= 0.0:
                     agent.state = PedestrianState.MOVING
                     src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, self.node_floors, agent.floor)
-                    next_hop = self.get_next_waypoint(src, agent.floor, agent.id, prev_node=getattr(agent, "prev_node", ""))
+                    next_hop = self.get_next_waypoint(
+                        src, agent.floor, agent.id,
+                        prev_node=getattr(agent, "prev_node", ""),
+                        recent_nodes=getattr(agent, "recent_nodes", []),
+                    )
                     if next_hop:
                         agent.path = [next_hop]
 
             elif agent.state in (PedestrianState.MOVING, PedestrianState.REROUTING, PedestrianState.DANGER):
                 if not agent.path:
                     src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, self.node_floors, agent.floor)
-                    next_hop = self.get_next_waypoint(src, agent.floor, agent.id, prev_node=getattr(agent, "prev_node", ""))
+                    next_hop = self.get_next_waypoint(
+                        src, agent.floor, agent.id,
+                        prev_node=getattr(agent, "prev_node", ""),
+                        recent_nodes=getattr(agent, "recent_nodes", []),
+                    )
                     if next_hop:
                         agent.path = [next_hop]
                         if agent.state == PedestrianState.REROUTING:
@@ -600,6 +650,7 @@ class Simulation:
         for agent in self.agents:
             agent.state = PedestrianState.NORMAL
             agent.path = []
+            agent.recent_nodes = [agent.current_node] if agent.current_node else []
 
     # ── Direct ST-TBA-GAT inference and serialisation ─────────────────────────
     def _policy_features(self):

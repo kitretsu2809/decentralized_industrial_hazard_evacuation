@@ -109,6 +109,9 @@ class SocialForceModel:
                         agent.floor = target_floor
                         agent.prev_node = agent.current_node
                         agent.current_node = target_id
+                        if not agent.recent_nodes or agent.recent_nodes[-1] != target_id:
+                            agent.recent_nodes.append(target_id)
+                            if len(agent.recent_nodes) > 6: agent.recent_nodes = agent.recent_nodes[-6:]
                         agent.path = agent.path[1:]
                         tx_, ty_ = self.node_positions.get(target_id, (agent.x, agent.y))
                         agent.x, agent.y = tx_, ty_
@@ -120,6 +123,9 @@ class SocialForceModel:
                     if d_target < 1.0: # Reached node!
                         agent.prev_node = agent.current_node
                         agent.current_node = target_id
+                        if not agent.recent_nodes or agent.recent_nodes[-1] != target_id:
+                            agent.recent_nodes.append(target_id)
+                            if len(agent.recent_nodes) > 6: agent.recent_nodes = agent.recent_nodes[-6:]
                         agent.path = agent.path[1:]
                         if not agent.path:
                             continue
@@ -129,6 +135,9 @@ class SocialForceModel:
                             agent.floor = next_floor
                             agent.prev_node = agent.current_node
                             agent.current_node = next_id
+                            if not agent.recent_nodes or agent.recent_nodes[-1] != next_id:
+                                agent.recent_nodes.append(next_id)
+                                if len(agent.recent_nodes) > 6: agent.recent_nodes = agent.recent_nodes[-6:]
                             agent.path = agent.path[1:]
                             nx_, ny_ = self.node_positions.get(next_id, (agent.x, agent.y))
                             agent.x, agent.y = nx_, ny_

@@ -140,7 +140,8 @@ class IndustrialEvacuationEnv(ParallelEnv):
         opts = options or {}
         num_evac = opts.get("num_evacuees", self.num_evacuees)
         self.num_evacuees = num_evac
-        self.max_sim_time = max(120.0, 90.0 + 0.15 * num_evac)
+        # Realistic egress duration ceiling (watchdog timeout)
+        self.max_sim_time = max(360.0, 240.0 + 0.4 * num_evac)
         cluster_node = opts.get("cluster_node")
         cluster_ratio = float(opts.get("cluster_ratio", 0.0))
         self.sim.reset(num_evacuees=num_evac, cluster_node=cluster_node, cluster_ratio=cluster_ratio)
@@ -353,6 +354,17 @@ class IndustrialEvacuationEnv(ParallelEnv):
         n_total = max(1, self.sim.num_evacuees)
         prop_evac = float(delta_evac) / n_total
         prop_cas = float(delta_cas) / n_total
+        in_transit = max(0, self.sim.num_evacuees - (evac_now + cas_now))
+
+        # Check termination / truncation: terminates naturally when in_transit == 0
+        total_finished = evac_now + cas_now
+        is_terminated = (total_finished >= self.sim.num_evacuees)
+        is_truncated = (self.sim.t >= self.max_sim_time)
+
+        # In-transit urgency penalty: penalizes idling or keeping occupants wandering inside the hazard zone
+        urgency_penalty = 0.05 * (float(in_transit) / float(n_total))
+        # Watchdog trapped penalty: heavily penalizes leaving anyone behind if watchdog timeout expires
+        trapped_penalty = (self.weights["cas"] * (float(in_transit) / float(n_total))) if is_truncated and in_transit > 0 else 0.0
 
         # Team reward shared equally across all edge router agents
         team_reward = (
@@ -362,14 +374,11 @@ class IndustrialEvacuationEnv(ParallelEnv):
             - self.weights["cong"] * cong_penalty
             - self.weights.get("jam", 5.0) * jamming_penalty
             - self.weights["flip"] * (flipping_penalty / max(1, len(self.agents)))
+            - urgency_penalty
+            - trapped_penalty
         )
 
         rewards = {agent: team_reward for agent in self.agents}
-
-        # Check termination / truncation
-        total_finished = evac_now + cas_now
-        is_terminated = (total_finished >= self.sim.num_evacuees)
-        is_truncated = (self.sim.t >= self.max_sim_time)
 
         terminations = {agent: is_terminated for agent in self.agents}
         truncations = {agent: is_truncated for agent in self.agents}
