@@ -89,21 +89,23 @@ class IndustrialEvacuationEnv(ParallelEnv):
         }
         self.action_space = gymnasium.spaces.Discrete(self.MAX_CORRIDORS + 1)
 
-        # Balanced Team Reward Weights
+        # Normalized Team Reward Weights (bounded episode returns in [-20, +15])
         self.weights = reward_weights or {
-            "evac": 100.0,     # Reward on confirmed egress completion
-            "cas": 200.0,      # High penalty on casualty incidence
-            "progress": 15.0,  # Dense step reward for moving closer to exits
-            "flip": 1.0,       # Penalty on gratuitous signboard changes
+            "evac": 10.0,      # Reward on confirmed egress completion
+            "cas": 20.0,       # High penalty on casualty incidence / trapped occupants
+            "progress": 2.0,   # Dense step reward for moving closer to exits
+            "flip": 0.05,      # Penalty on gratuitous signboard changes
             "cong": 0.5,       # Spatial density variance penalty
-            "jam": 5.0,        # Doorway arching & local jamming density penalty
-            "cycle": 15.0,     # Graph-level penalty for closed routing cycles
-            "unreach": 10.0,   # Graph-level penalty for nodes with no path to exits
+            "jam": 1.0,        # Doorway arching & local jamming density penalty
+            "cycle": 1.5,      # Graph-level penalty for closed routing cycles
+            "unreach": 1.0,    # Graph-level penalty for nodes with no path to exits
         }
 
         # Episode state tracking
         self.last_evacuated: int = 0
         self.last_casualties: int = 0
+        self.last_progress_finished: int = 0
+        self.stagnation_timer: float = 0.0
         self.prev_actions: Dict[str, int] = {nid: self.MAX_CORRIDORS for nid in self.agents}
         self.last_hazards: Dict[str, float] = {nid: 0.0 for nid in self.agents}
         self.last_crowds: Dict[str, float] = {nid: 0.0 for nid in self.agents}
@@ -113,14 +115,48 @@ class IndustrialEvacuationEnv(ParallelEnv):
         mask = np.zeros(self.MAX_CORRIDORS + 1, dtype=bool)
         nbrs = self.agent_neighbors.get(agent_id, [])
         local_h = self.sim.hazard.levels.get(agent_id, 0.0)
+        curr_dist = self.exit_dists.get(agent_id, 50.0)
         num_valid = min(len(nbrs), self.MAX_CORRIDORS)
+
+        # Check if at least one forward corridor (toward exit) is safe and passable
+        has_safe_forward = False
         for k in range(num_valid):
             nbr = nbrs[k]
             nbr_h = self.sim.hazard.levels.get(nbr, 0.0)
+            nbr_dist = self.exit_dists.get(nbr, 50.0)
             is_hoist = "hoist" in agent_id and "hoist" in nbr
             is_dead_end = len(self.agent_neighbors.get(nbr, [])) <= 1 and nbr not in self.sim.exits
-            if local_h < 0.80 and nbr_h < 0.80 and not is_hoist and not is_dead_end:
-                mask[k] = True
+            if local_h < 0.30 and nbr_h < 0.30 and not is_hoist and not is_dead_end:
+                if nbr_dist <= curr_dist + 2.0:
+                    has_safe_forward = True
+                    break
+
+        for k in range(num_valid):
+            nbr = nbrs[k]
+            nbr_h = self.sim.hazard.levels.get(nbr, 0.0)
+            nbr_dist = self.exit_dists.get(nbr, 50.0)
+            is_hoist = "hoist" in agent_id and "hoist" in nbr
+            is_dead_end = len(self.agent_neighbors.get(nbr, [])) <= 1 and nbr not in self.sim.exits
+            if local_h >= 0.80 or nbr_h >= 0.80 or is_hoist or is_dead_end:
+                continue
+
+            # In safe conditions with clear forward paths, mask out deep reverse corridors
+            if has_safe_forward and local_h < 0.30 and nbr_h < 0.30:
+                if nbr_dist > curr_dist + 4.0:
+                    continue  # Prevents pointless backward loops when the exit path is completely clear
+
+            mask[k] = True
+
+        # Safety fallback: ensure at least one physical corridor is available
+        if not np.any(mask[:num_valid]):
+            for k in range(num_valid):
+                nbr = nbrs[k]
+                nbr_h = self.sim.hazard.levels.get(nbr, 0.0)
+                is_hoist = "hoist" in agent_id and "hoist" in nbr
+                is_dead_end = len(self.agent_neighbors.get(nbr, [])) <= 1 and nbr not in self.sim.exits
+                if local_h < 0.80 and nbr_h < 0.80 and not is_hoist and not is_dead_end:
+                    mask[k] = True
+
         mask[self.MAX_CORRIDORS] = True  # Standby option is always valid
         return mask
 
@@ -143,8 +179,10 @@ class IndustrialEvacuationEnv(ParallelEnv):
         opts = options or {}
         num_evac = opts.get("num_evacuees", self.num_evacuees)
         self.num_evacuees = num_evac
-        # Realistic egress duration ceiling (watchdog timeout)
-        self.max_sim_time = max(360.0, 240.0 + 0.4 * num_evac)
+        # Realistic egress duration ceiling (watchdog timeout: max 200s, ~80s for 30 peds)
+        self.max_sim_time = min(200.0, 75.0 + 0.35 * num_evac)
+        self.last_progress_finished = 0
+        self.stagnation_timer = 0.0
         cluster_node = opts.get("cluster_node")
         cluster_ratio = float(opts.get("cluster_ratio", 0.0))
         self.sim.reset(num_evacuees=num_evac, cluster_node=cluster_node, cluster_ratio=cluster_ratio)
@@ -362,11 +400,20 @@ class IndustrialEvacuationEnv(ParallelEnv):
         # Check termination / truncation: terminates naturally when in_transit == 0
         total_finished = evac_now + cas_now
         is_terminated = (total_finished >= self.sim.num_evacuees)
-        is_truncated = (self.sim.t >= self.max_sim_time)
 
-        # In-transit urgency penalty: penalizes idling or keeping occupants wandering inside the hazard zone
-        urgency_penalty = 0.05 * (float(in_transit) / float(n_total))
-        # Watchdog trapped penalty: heavily penalizes leaving anyone behind if watchdog timeout expires
+        # Stagnation early-stopping: if no progress for 25s while people remain in-transit
+        if total_finished > self.last_progress_finished:
+            self.last_progress_finished = total_finished
+            self.stagnation_timer = 0.0
+        elif in_transit > 0:
+            self.stagnation_timer += self.DECISION_DT
+
+        is_stagnated = (self.stagnation_timer >= 25.0 and in_transit > 0)
+        is_truncated = (self.sim.t >= self.max_sim_time) or is_stagnated
+
+        # In-transit urgency penalty: gentle per-step nudging to evacuate quickly
+        urgency_penalty = 0.01 * (float(in_transit) / float(n_total))
+        # Watchdog / Stagnation trapped penalty: assessed once when episode truncates or stagnates with trapped occupants
         trapped_penalty = (self.weights["cas"] * (float(in_transit) / float(n_total))) if is_truncated and in_transit > 0 else 0.0
 
         # Graph-level Topological Cycle & Reachability Analysis
@@ -403,12 +450,12 @@ class IndustrialEvacuationEnv(ParallelEnv):
         team_reward = (
             self.weights["evac"] * prop_evac
             - self.weights["cas"] * prop_cas
-            + self.weights.get("progress", 15.0) * r_progress
+            + self.weights.get("progress", 2.0) * r_progress
             - self.weights["cong"] * cong_penalty
-            - self.weights.get("jam", 5.0) * jamming_penalty
+            - self.weights.get("jam", 1.0) * jamming_penalty
             - self.weights["flip"] * (flipping_penalty / max(1, len(self.agents)))
-            - self.weights.get("cycle", 15.0) * cycle_penalty
-            - self.weights.get("unreach", 10.0) * unreach_penalty
+            - self.weights.get("cycle", 1.5) * cycle_penalty
+            - self.weights.get("unreach", 1.0) * unreach_penalty
             - urgency_penalty
             - trapped_penalty
         )
