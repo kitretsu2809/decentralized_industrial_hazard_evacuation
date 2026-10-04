@@ -200,7 +200,7 @@ Training runs with **Centralized Training with Decentralized Execution (CTDE)** 
 
 ### GPU Training Commands
 
-To train or retrain the ST-TBA-GAT policy on CUDA:
+To train or retrain the ST-TBA-GAT policy on CUDA locally:
 
 ```bash
 # Full 60-episode curriculum training with bottleneck crowd clustering:
@@ -222,6 +222,50 @@ PYTHONPATH=. python simulator/training/train_mappo.py \
     --resume checkpoints/directional/best_policy.pt \
     --save-dir checkpoints/directional
 ```
+
+---
+
+### Cloud Training on Kaggle (Free GPU T4 / P100)
+
+You can run the entire 100-episode training process on Kaggle's free GPUs without utilizing local compute:
+
+1. **Create Notebook on Kaggle**:
+   - Go to [kaggle.com/code](https://www.kaggle.com/code) -> **New Notebook**.
+   - In **Notebook Settings** (right panel), set **Accelerator** -> **GPU T4 x2** (or **P100**).
+   - Ensure **Internet** is toggled **ON**.
+
+2. **Upload or Run Notebook**:
+   - You can upload `kaggle_training.ipynb` directly, or paste the following into a code cell:
+   ```bash
+   # 1. Clone repository
+   !git clone -b marl-v2-training https://github.com/kitretsu2809/decentralized_industrial_hazard_evacuation.git
+   %cd decentralized_industrial_hazard_evacuation
+
+   # 2. Install dependencies
+   !pip install -q gymnasium pettingzoo onnx
+
+   # 3. Train on GPU for 100 episodes
+   !PYTHONPATH=. python simulator/training/train_mappo.py \
+       --device cuda \
+       --episodes 100 \
+       --save-dir /kaggle/working/checkpoints \
+       --min-evacuees 30 \
+       --max-evacuees 400 \
+       --curriculum \
+       --eval
+   ```
+
+3. **Download Model Checkpoint**:
+   - In the right-hand **Data / Output** panel on Kaggle, locate `/kaggle/working/checkpoints/best_policy.pt`.
+   - Click the three dots `...` next to `best_policy.pt` and select **Download**.
+
+4. **Deploy Trained Weights Locally**:
+   - Place the downloaded file into your local project:
+   ```bash
+   cp ~/Downloads/best_policy.pt checkpoints/directional/best_policy.pt
+   cp ~/Downloads/best_policy.pt data/models/st_tba_gat_latest.pt
+   ```
+   - If the digital twin is open (`http://127.0.0.1:8080/`), toggle routing mode to `AI (ST-TBA-GAT)`. The simulator will immediately execute inference using your newly trained Kaggle weights!
 
 ---
 
