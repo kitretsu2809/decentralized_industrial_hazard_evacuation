@@ -42,6 +42,7 @@ class RolloutBuffer:
         self.hidden_states: List[np.ndarray] = []  # (N, H)
         self.actions: List[np.ndarray] = []        # (N, K)
         self.action_log_probs: List[np.ndarray] = []  # (N,)
+        self.action_masks: List[np.ndarray] = []   # (N, K+1)
         self.rewards: List[float] = []             # scalar
         self.values: List[float] = []              # scalar
         self.dones: List[bool] = []                # scalar
@@ -52,6 +53,7 @@ class RolloutBuffer:
         hidden_states: np.ndarray,
         actions: np.ndarray,
         action_log_probs: np.ndarray,
+        action_masks: np.ndarray,
         reward: float,
         value: float,
         done: bool,
@@ -60,6 +62,7 @@ class RolloutBuffer:
         self.hidden_states.append(hidden_states)
         self.actions.append(actions)
         self.action_log_probs.append(action_log_probs)
+        self.action_masks.append(action_masks)
         self.rewards.append(reward)
         self.values.append(value)
         self.dones.append(done)
@@ -286,13 +289,26 @@ class MAPPOTrainer:
 
         obs, infos = self.env.reset(options=reset_opts)
 
-        # Dual disaster injection
+        # Configure Dynamic Cascading Disaster (Mid-Episode Flare-up / Secondary Rupture)
+        # Instead of injecting at t=0, the secondary disaster erupts mid-evacuation (step 6-14, ~15-35s)
+        # while evacuees are actively traversing corridors, forcing the model to master real-time dynamic rerouting!
         dual_injected = False
+        sec_trigger_step = -1
+        sec_target = None
+        sec_htype = None
+        sec_intensity = 0.0
         if random.random() < dual_chance:
-            candidates = ["tank_farm_a", "tank_farm_b", "reactor_1", "reactor_2", "hazmat_basin", "loading_bay"]
-            sec_target = random.choice([c for c in candidates if c != target_node])
-            self.env.sim.inject_disaster(sec_target, random.choice(["FIRE", "GAS_RELEASE"]), random.uniform(0.65, 0.85))
-            dual_injected = True
+            candidates = [
+                "tank_farm_a", "tank_farm_b", "reactor_1", "reactor_2",
+                "hazmat_basin", "loading_bay", "compressor_shed", "pipe_rack_junc_1"
+            ]
+            valid_cands = [c for c in candidates if c != target_node]
+            if valid_cands:
+                sec_target = random.choice(valid_cands)
+                sec_htype = random.choice(["FIRE", "GAS_RELEASE", "EXPLOSION"])
+                sec_intensity = random.uniform(0.70, 0.95)
+                # Triggers mid-egress between 15s and 35s while people are walking!
+                sec_trigger_step = random.randint(6, 14)
 
         self.buffer.clear()
 
@@ -303,10 +319,26 @@ class MAPPOTrainer:
         step_count = 0
 
         while True:
+            # Mid-Episode Dynamic Disaster Trigger:
+            if step_count == sec_trigger_step and sec_target and not dual_injected:
+                self.env.sim.inject_disaster(sec_target, sec_htype, sec_intensity)
+                dual_injected = True
+                # Trigger real-time rerouting for moving evacuees heading toward the newly ignited room
+                for p in self.env.sim.agents:
+                    if p.path and sec_target in p.path:
+                        p.path = []
+                        p.state = PedestrianState.REROUTING
+
             # Prepare batch tensor for all agents: (N, obs_dim)
             obs_array = np.stack([obs[agent] for agent in self.env.agents])
             node_features = torch.tensor(
                 obs_array, dtype=torch.float32, device=self.device
+            )
+
+            # Query live, real-time action masks as hazards diffuse and erupt
+            masks_np = self.env.get_all_action_masks()
+            live_action_masks = torch.tensor(
+                masks_np, dtype=torch.bool, device=self.device
             )
 
             with torch.no_grad():
@@ -314,7 +346,7 @@ class MAPPOTrainer:
                     node_features=node_features,
                     edge_index=self.edge_index,
                     hidden_state=hidden_state,
-                    action_masks=self.action_masks,
+                    action_masks=live_action_masks,
                     deterministic=False,
                 )
 
@@ -337,6 +369,7 @@ class MAPPOTrainer:
                 hidden_states=old_hidden_np,
                 actions=actions_np,
                 action_log_probs=log_probs_np,
+                action_masks=masks_np,
                 reward=reward,
                 value=val_scalar,
                 done=done,
@@ -413,12 +446,16 @@ class MAPPOTrainer:
                     self.buffer.action_log_probs[t], dtype=torch.float32, device=self.device
                 )
 
+                masks_t = torch.tensor(
+                    self.buffer.action_masks[t], dtype=torch.bool, device=self.device
+                )
+
                 val_pred, new_lp, entropy = self.policy.evaluate_actions(
                     node_features=nf,
                     edge_index=self.edge_index,
                     hidden_state=hs,
                     actions=act,
-                    action_masks=self.action_masks,
+                    action_masks=masks_t,
                 )
 
                 # Mean ratio across agents: (N,)
