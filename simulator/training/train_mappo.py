@@ -588,6 +588,7 @@ def run_benchmark(
         # ── 1. Static NFPA Baseline ───────────────────────────────────────────
         # Static signage has no environmental sensing; paths never redirect around fire/gas
         env.reset(seed=seed, options={**scen, "policy_mode": "static"})
+        env.max_sim_time = min(240.0, 120.0 + 0.50 * num_evacuees)
         static_act = {a: env.MAX_CORRIDORS for a in env.agents}
         while True:
             _, _, terms, truncs, _ = env.step(static_act)
@@ -599,6 +600,7 @@ def run_benchmark(
         # ── 2. Classical Centralized Dijkstra ─────────────────────────────────
         # Centralized SCADA host at control_room; subject to 25% communication link severance
         env.reset(seed=seed, options={**scen, "policy_mode": "dijkstra"})
+        env.max_sim_time = min(240.0, 120.0 + 0.50 * num_evacuees)
         rng = random.Random(seed)
         edges = list(env.sim.router.G.edges())
         # In an industrial disaster, cables incident to the ignition node burn out,
@@ -640,8 +642,11 @@ def run_benchmark(
         # ── 3. ST-TBA-GAT (Ours - Decentralized Edge GAT + Reflexive Safety) ──
         # Edge routers execute local 1-hop GAT inference and 20ms hardware reflexive safety override
         obs, _ = env.reset(seed=seed, options={**scen, "policy_mode": "marl"})
+        env.max_sim_time = min(240.0, 120.0 + 0.50 * num_evacuees)
         hs = torch.zeros(len(env.agents), 64, device=device_obj)
         while True:
+            # Refresh live action masks dynamically as hazards diffuse through corridors
+            live_masks = torch.tensor(env.get_all_action_masks(), dtype=torch.bool, device=device_obj)
             obs_array = np.stack([obs[agent] for agent in env.agents])
             nf = torch.tensor(obs_array, dtype=torch.float32, device=device_obj)
             with torch.no_grad():
@@ -649,8 +654,8 @@ def run_benchmark(
                     node_features=nf,
                     edge_index=edge_index,
                     hidden_state=hs,
-                    action_masks=action_masks,
-                    deterministic=True,
+                    action_masks=live_masks,
+                    deterministic=False,
                 )
             acts_np = acts_t.cpu().numpy()
             act_dict = {a: acts_np[i] for i, a in enumerate(env.agents)}
