@@ -460,10 +460,22 @@ class MAPPOTrainer:
                 best_survival = max(best_survival, surv)
                 best_path = os.path.join(self.save_dir, "best_policy.pt")
                 self.policy.save_checkpoint(best_path, extra_meta=metrics)
+                if os.path.basename(self.save_dir) == "directional":
+                    root_best = os.path.join(os.path.dirname(self.save_dir), "best_policy.pt")
+                    try:
+                        self.policy.save_checkpoint(root_best, extra_meta=metrics)
+                    except Exception:
+                        pass
 
             # Save latest checkpoint
             latest_path = os.path.join(self.save_dir, "st_tba_gat_latest.pt")
             self.policy.save_checkpoint(latest_path, extra_meta=metrics)
+            if os.path.basename(self.save_dir) == "directional":
+                root_latest = os.path.join(os.path.dirname(self.save_dir), "st_tba_gat_latest.pt")
+                try:
+                    self.policy.save_checkpoint(root_latest, extra_meta=metrics)
+                except Exception:
+                    pass
 
         print("\n" + "=" * 80)
         print(f"✅ TRAINING FINISHED! Best Survival Rate: {best_survival:.1f}%")
