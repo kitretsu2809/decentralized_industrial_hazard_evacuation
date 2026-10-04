@@ -196,7 +196,6 @@ class ST_TBA_GAT(nn.Module):
     Complete Spatio-Temporal Topology & Bottleneck-Aware Graph Attention Network.
     Designed for Multi-Agent Reinforcement Learning (MAPPO) in hazardous facilities.
     """
-    NUM_ACTIONS: int = 4
     NORMAL: int = ReflexiveSafetyOverride.NORMAL
     CAUTION: int = ReflexiveSafetyOverride.CAUTION
     BLOCKED: int = ReflexiveSafetyOverride.BLOCKED
@@ -215,6 +214,7 @@ class ST_TBA_GAT(nn.Module):
         self.node_dim = node_dim
         self.hidden_dim = hidden_dim
         self.max_corridors = max_corridors
+        self.NUM_ACTIONS = max_corridors + 1  # 0..max_corridors-1: corridor arrows, max_corridors: standby
         self.gat_heads = gat_heads
         self.gat_layers = gat_layers
 
@@ -242,28 +242,18 @@ class ST_TBA_GAT(nn.Module):
         self.gru = nn.GRUCell(hidden_dim, hidden_dim)
 
         # ── 3. Decentralized Actor Heads ────────────────────────────────────
-        # For each of the max_corridors: categorical logits over:
-        # {0: NORMAL (cyan standby), 1: CAUTION (amber detour), 2: BLOCKED (red X), 3: GREEN ARROW (safe exit)}
+        # Predicts primary exit corridor direction (0..K-1) or standby (K)
         self.actor_mlp = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.ReLU(),
-            nn.Linear(hidden_dim // 2, max_corridors * self.NUM_ACTIONS),
+            nn.Linear(hidden_dim // 2, self.NUM_ACTIONS),
         )
-        # Initialize actor head bias:
-        # 0: NORMAL = 1.0 (standby open corridor)
-        # 1: CAUTION = 0.0
-        # 2: BLOCKED = -2.0 (rare barrier)
-        # 3: GREEN ARROW = 0.5.  A moderate prior preserves exploration while
-        #    avoiding a newly initialized policy pointing every sign at once.
         with torch.no_grad():
-            bias = torch.zeros(max_corridors * self.NUM_ACTIONS)
-            for k in range(max_corridors):
-                bias[k * self.NUM_ACTIONS + self.NORMAL] = 1.0
-                bias[k * self.NUM_ACTIONS + self.CAUTION] = 0.0
-                bias[k * self.NUM_ACTIONS + self.BLOCKED] = -2.0
-                bias[k * self.NUM_ACTIONS + self.GREEN_ARROW] = 0.5
+            bias = torch.zeros(self.NUM_ACTIONS)
+            bias[:-1] = 0.5   # Exploration incentive across valid corridors
+            bias[-1] = 0.0    # Neutral standby
             self.actor_mlp[-1].bias.copy_(bias)
 
         # ── 4. Centralized Critic Head (CTDE) ───────────────────────────────
@@ -312,14 +302,11 @@ class ST_TBA_GAT(nn.Module):
 
         new_hidden_state = self.gru(spatial_emb, hidden_state)
 
-        logits_flat = self.actor_mlp(new_hidden_state)  # (N, max_corridors * 4)
-        logits = logits_flat.view(N, self.max_corridors, self.NUM_ACTIONS)
+        logits = self.actor_mlp(new_hidden_state)  # (N, NUM_ACTIONS)
 
         if action_masks is not None:
-            # action_masks: (N, max_corridors) boolean mask (True = valid corridor, False = padded)
-            # Mask out non-existent corridors with large negative logits
-            mask = action_masks.unsqueeze(-1).expand_as(logits)
-            logits = logits.masked_fill(~mask, -1e9)
+            # action_masks: (N, NUM_ACTIONS) boolean tensor
+            logits = logits.masked_fill(~action_masks, -1e9)
 
         return logits, new_hidden_state
 
@@ -331,7 +318,9 @@ class ST_TBA_GAT(nn.Module):
         """Returns the per-corridor hazard tensor encoded in the observation."""
         if neighbor_hazards is not None:
             return neighbor_hazards
-        if node_features.shape[-1] >= 10 + self.max_corridors * 4:
+        if node_features.shape[-1] >= 11 + self.max_corridors * 5:
+            return node_features[:, 11::5][:, :self.max_corridors]
+        elif node_features.shape[-1] >= 10 + self.max_corridors * 4:
             return node_features[:, 10::4][:, :self.max_corridors]
         return torch.zeros(
             node_features.size(0), self.max_corridors, device=node_features.device
@@ -343,27 +332,13 @@ class ST_TBA_GAT(nn.Module):
         node_hazards: torch.Tensor,
         neighbor_hazards: torch.Tensor,
     ) -> torch.Tensor:
-        """Masks unsafe actions before sampling so PPO and the safety shield agree.
-
-        A post-sampling-only safety clamp changes the executed action without changing
-        its likelihood under the policy.  Masking the illegal outcomes first keeps the
-        sampled action, rollout log-probability, and PPO update mathematically aligned.
-        ``ReflexiveSafetyOverride.apply`` remains as a hardware-equivalent final guard.
-        """
+        """Masks unsafe corridor directions so policy never points evacuees toward danger."""
         constrained = logits.clone()
-        action_ids = torch.arange(self.NUM_ACTIONS, device=logits.device).view(1, 1, -1)
-        critical = (
-            (node_hazards.squeeze(-1) >= ReflexiveSafetyOverride.THETA_CRIT).unsqueeze(-1)
-            | (neighbor_hazards >= ReflexiveSafetyOverride.THETA_CRIT)
-        )
-        critical_mask = critical.unsqueeze(-1) & (action_ids != self.BLOCKED)
-        constrained = constrained.masked_fill(critical_mask, -1e9)
-
-        warning = (
-            (neighbor_hazards >= ReflexiveSafetyOverride.THETA_WARN) & ~critical
-        ).unsqueeze(-1)
-        unsafe_at_warning = (action_ids == self.NORMAL) | (action_ids == self.GREEN_ARROW)
-        constrained = constrained.masked_fill(warning & unsafe_at_warning, -1e9)
+        crit_local = node_hazards.squeeze(-1) >= ReflexiveSafetyOverride.THETA_CRIT
+        for k in range(self.max_corridors):
+            crit_nbr = neighbor_hazards[:, k] >= ReflexiveSafetyOverride.THETA_CRIT
+            must_block = crit_local | crit_nbr
+            constrained[must_block, k] = -1e9
         return constrained
 
     def forward_critic(
@@ -401,8 +376,8 @@ class ST_TBA_GAT(nn.Module):
         """
         Action selection during rollout or live inference.
         Returns:
-          actions: (N, max_corridors) in {0, 1, 2, 3}
-          action_log_probs: (N,) sum of log probs over valid corridors
+          actions: (N,) discrete action index in {0, ..., NUM_ACTIONS - 1}
+          action_log_probs: (N,) log probability of selected action
           new_hidden_state: (N, hidden_dim)
           value: scalar state value estimate
         """
@@ -419,22 +394,11 @@ class ST_TBA_GAT(nn.Module):
 
         dist = Categorical(logits=logits)
         if deterministic:
-            raw_actions = torch.argmax(logits, dim=-1)
+            actions = torch.argmax(logits, dim=-1)
         else:
-            raw_actions = dist.sample()
+            actions = dist.sample()
 
-        log_probs = dist.log_prob(raw_actions)  # (N, max_corridors)
-        if action_masks is not None:
-            log_probs = (log_probs * action_masks.float()).sum(dim=-1)
-        else:
-            log_probs = log_probs.sum(dim=-1)
-
-        if apply_reflexive:
-            actions = ReflexiveSafetyOverride.apply(
-                raw_actions, node_features[:, 0], resolved_neighbor_hazards
-            )
-        else:
-            actions = raw_actions
+        log_probs = dist.log_prob(actions)  # (N,)
 
         return actions, log_probs, new_hidden_state, value
 
@@ -464,16 +428,8 @@ class ST_TBA_GAT(nn.Module):
         value = self.forward_critic(new_hidden_state)
 
         dist = Categorical(logits=logits)
-        log_probs = dist.log_prob(actions)  # (N, max_corridors)
-        entropy = dist.entropy()           # (N, max_corridors)
-
-        if action_masks is not None:
-            mask_f = action_masks.float()
-            log_probs = (log_probs * mask_f).sum(dim=-1)
-            entropy = (entropy * mask_f).sum(dim=-1)
-        else:
-            log_probs = log_probs.sum(dim=-1)
-            entropy = entropy.sum(dim=-1)
+        log_probs = dist.log_prob(actions)  # (N,)
+        entropy = dist.entropy()           # (N,)
 
         return value, log_probs, entropy
 

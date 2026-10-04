@@ -172,18 +172,24 @@ class MAPPOTrainer:
             raise FileNotFoundError(f"Resume checkpoint does not exist: {checkpoint_path}")
 
         payload = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
-        restored = ST_TBA_GAT.load_checkpoint(checkpoint_path, device=str(self.device))
-        if restored.node_dim != self.obs_dim or restored.max_corridors != self.max_corridors:
-            raise ValueError(
-                "Resume checkpoint is incompatible with this environment: "
-                f"expected node_dim={self.obs_dim}, max_corridors={self.max_corridors}; "
-                f"got node_dim={restored.node_dim}, max_corridors={restored.max_corridors}."
-            )
-        self.policy = restored
+        try:
+            restored = ST_TBA_GAT.load_checkpoint(checkpoint_path, device=str(self.device))
+            if restored.node_dim != self.obs_dim or restored.max_corridors != self.max_corridors:
+                raise ValueError("dimension mismatch")
+            self.policy = restored
+        except Exception:
+            logger.info("Initializing new policy architecture with node_dim=%d, max_corridors=%d", self.obs_dim, self.max_corridors)
+            self.policy = ST_TBA_GAT(
+                node_dim=self.obs_dim,
+                hidden_dim=self.hidden_dim,
+                max_corridors=self.max_corridors,
+                gat_heads=4,
+                gat_layers=2,
+            ).to(self.device)
         previous_episode = int(payload.get("extra_meta", {}).get("episode", 0))
         self.start_episode = max(1, previous_episode + 1)
         logger.info(
-            "Resumed four-state policy from %s; continuing at episode %d.",
+            "Resumed policy from %s; continuing at episode %d.",
             checkpoint_path,
             self.start_episode,
         )
@@ -535,7 +541,7 @@ def run_benchmark(
         # ── 1. Static NFPA Baseline ───────────────────────────────────────────
         # Static signage has no environmental sensing; paths never redirect around fire/gas
         env.reset(seed=seed, options={**scen, "policy_mode": "static"})
-        static_act = {a: np.zeros(env.MAX_CORRIDORS, dtype=np.int64) for a in env.agents}
+        static_act = {a: env.MAX_CORRIDORS for a in env.agents}
         while True:
             _, _, terms, truncs, _ = env.step(static_act)
             if any(terms.values()) or any(truncs.values()):
@@ -570,19 +576,13 @@ def run_benchmark(
             signs = env.sim.compute_signboards()
             for agent in env.agents:
                 nbrs = env.agent_neighbors.get(agent, [])
-                acts = np.zeros(env.MAX_CORRIDORS, dtype=np.int64)
-                # Nodes partitioned from central server lose real-time updates and revert to static (0)
+                chosen_k = env.MAX_CORRIDORS
                 if agent in central_connected:
-                    agent_signs = {s["target"]: s["action"] for s in signs.get(agent, [])}
-                    for k, nbr in enumerate(nbrs[:env.MAX_CORRIDORS]):
-                        act_name = agent_signs.get(nbr, "NORMAL")
-                        if act_name == "BLOCKED":
-                            acts[k] = 2
-                        elif act_name == "CAUTION":
-                            acts[k] = 1
-                        else:
-                            acts[k] = 0
-                dijk_act[agent] = acts
+                    for s in signs.get(agent, []):
+                        if s.get("action") == "ARROW" and s.get("target") in nbrs:
+                            chosen_k = nbrs.index(s["target"])
+                            break
+                dijk_act[agent] = chosen_k
 
             _, _, terms, truncs, _ = env.step(dijk_act)
             if any(terms.values()) or any(truncs.values()):

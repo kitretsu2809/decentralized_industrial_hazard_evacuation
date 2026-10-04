@@ -32,7 +32,7 @@ class IndustrialEvacuationEnv(ParallelEnv):
     metadata = {"name": "industrial_evacuation_v1", "render_modes": ["human"]}
 
     MAX_CORRIDORS: int = 6
-    DECISION_DT: float = 1.0  # Decision interval: policy steps every 1.0 sim-second (10 SFM ticks)
+    DECISION_DT: float = 2.5  # Decision interval: policy steps every 2.5 sim-seconds (25 SFM ticks)
     MAX_SIM_TIME: float = 120.0  # Max episode length in simulated seconds
 
     def __init__(
@@ -47,6 +47,7 @@ class IndustrialEvacuationEnv(ParallelEnv):
         self.random_disasters = random_disasters
         self.sim = Simulation()
         self.sim.num_evacuees = num_evacuees
+        self.exit_dists = self.sim.static_exit_dists
 
         self.agents: List[str] = sorted(list(self.sim.node_positions.keys()))
         self.possible_agents: List[str] = self.agents.copy()
@@ -72,47 +73,56 @@ class IndustrialEvacuationEnv(ParallelEnv):
                 edges.append([u_idx, v_idx])
         self.edge_index = np.array(edges, dtype=np.int64).T  # (2, E)
 
-        # Observation dimension: 10 base features + (MAX_CORRIDORS * 4) neighbor features
-        self.base_feat_dim = 10
-        self.obs_dim = self.base_feat_dim + (self.MAX_CORRIDORS * 4)
+        # Observation dimension: 11 base features + (MAX_CORRIDORS * 5) neighbor features
+        self.base_feat_dim = 11
+        self.obs_dim = self.base_feat_dim + (self.MAX_CORRIDORS * 5)
 
         self.observation_spaces: Dict[str, Box] = {
             agent: Box(low=-5.0, high=5.0, shape=(self.obs_dim,), dtype=np.float32)
             for agent in self.possible_agents
         }
-        self.action_spaces: Dict[str, MultiDiscrete] = {
-            agent: MultiDiscrete([4] * self.MAX_CORRIDORS)
+        # Discrete choice: 0..MAX_CORRIDORS-1 = primary green exit corridor, MAX_CORRIDORS = standby
+        self.action_spaces: Dict[str, gymnasium.spaces.Discrete] = {
+            agent: gymnasium.spaces.Discrete(self.MAX_CORRIDORS + 1)
             for agent in self.possible_agents
         }
+        self.action_space = gymnasium.spaces.Discrete(self.MAX_CORRIDORS + 1)
 
-        # Scale-Invariant Life-Safety Reward Weights (Normalized by total headcount N)
+        # Balanced Team Reward Weights
         self.weights = reward_weights or {
-            "evac": 100.0,    # Scale-invariant reward: 100.0 * (delta_evac / N_total)
-            "cas": 500.0,     # Dominant life-safety penalty: 500.0 * (delta_cas / N_total)
-            "cas_flat": 5.0,  # Zero-tolerance penalty on any step where casualties occur
-            "cong": 0.5,      # Penalty on corridor density variance
-            "flip": 0.05,     # Penalty on rapid signage flickering
-            "arrow_surplus": 0.15,  # Discourage ambiguous multi-arrow controllers
-            "arrow_missing": 0.02,  # Encourage one actionable direction when safe
+            "evac": 100.0,     # Reward on confirmed egress completion
+            "cas": 200.0,      # High penalty on casualty incidence
+            "progress": 15.0,  # Dense step reward for moving closer to exits
+            "flip": 1.0,       # Penalty on gratuitous signboard changes
+            "cong": 0.5,       # Density variance penalty
         }
 
         # Episode state tracking
         self.last_evacuated: int = 0
         self.last_casualties: int = 0
-        self.prev_actions: Dict[str, np.ndarray] = {}
+        self.prev_actions: Dict[str, int] = {nid: self.MAX_CORRIDORS for nid in self.agents}
         self.last_hazards: Dict[str, float] = {nid: 0.0 for nid in self.agents}
         self.last_crowds: Dict[str, float] = {nid: 0.0 for nid in self.agents}
 
     def get_action_mask(self, agent_id: str) -> np.ndarray:
-        """Returns boolean mask of length MAX_CORRIDORS (True = valid incident corridor)."""
-        mask = np.zeros(self.MAX_CORRIDORS, dtype=bool)
-        num_valid = min(len(self.agent_neighbors[agent_id]), self.MAX_CORRIDORS)
-        mask[:num_valid] = True
+        """Returns boolean mask of length MAX_CORRIDORS + 1 (True = valid corridor choice or standby)."""
+        mask = np.zeros(self.MAX_CORRIDORS + 1, dtype=bool)
+        nbrs = self.agent_neighbors.get(agent_id, [])
+        local_h = self.sim.hazard.levels.get(agent_id, 0.0)
+        num_valid = min(len(nbrs), self.MAX_CORRIDORS)
+        for k in range(num_valid):
+            nbr = nbrs[k]
+            nbr_h = self.sim.hazard.levels.get(nbr, 0.0)
+            is_hoist = "hoist" in agent_id and "hoist" in nbr
+            is_dead_end = len(self.agent_neighbors.get(nbr, [])) <= 1 and nbr not in self.sim.exits
+            if local_h < 0.80 and nbr_h < 0.80 and not is_hoist and not is_dead_end:
+                mask[k] = True
+        mask[self.MAX_CORRIDORS] = True  # Standby option is always valid
         return mask
 
     def get_all_action_masks(self) -> np.ndarray:
-        """Returns (N, MAX_CORRIDORS) boolean array."""
-        masks = np.zeros((len(self.agents), self.MAX_CORRIDORS), dtype=bool)
+        """Returns (N, MAX_CORRIDORS + 1) boolean array."""
+        masks = np.zeros((len(self.agents), self.MAX_CORRIDORS + 1), dtype=bool)
         for i, agent in enumerate(self.agents):
             masks[i] = self.get_action_mask(agent)
         return masks
@@ -156,7 +166,7 @@ class IndustrialEvacuationEnv(ParallelEnv):
 
         self.last_evacuated = 0
         self.last_casualties = 0
-        self.prev_actions = {a: np.zeros(self.MAX_CORRIDORS, dtype=np.int64) for a in self.agents}
+        self.prev_actions = {a: self.MAX_CORRIDORS for a in self.agents}
         self.last_hazards = {nid: self.sim.hazard.levels.get(nid, 0.0) for nid in self.agents}
         self.last_crowds = {nid: 0.0 for nid in self.agents}
 
@@ -189,10 +199,12 @@ class IndustrialEvacuationEnv(ParallelEnv):
             delta_rho = rho - self.last_crowds.get(agent, 0.0)
             time_ratio = min(1.0, self.sim.t / max(1.0, self.max_sim_time))
             alarm_flag = 1.0 if self.sim.alarm_active else 0.0
+            exit_dist_norm = min(1.0, self.exit_dists.get(agent, 50.0) / 100.0)
 
             vec = [
                 h, rho, floor, is_stair, is_exit,
-                cap_norm, delta_h, delta_rho, time_ratio, alarm_flag
+                cap_norm, delta_h, delta_rho, time_ratio, alarm_flag,
+                exit_dist_norm,
             ]
 
             # Neighbor features for up to MAX_CORRIDORS
@@ -210,9 +222,10 @@ class IndustrialEvacuationEnv(ParallelEnv):
                         if (s == agent and t == nbr) or (t == agent and s == nbr):
                             dist, width = d, w
                             break
-                    vec.extend([n_h, n_rho, min(1.0, dist / 30.0), min(1.0, width / 5.0)])
+                    n_exit_norm = min(1.0, self.exit_dists.get(nbr, 50.0) / 100.0)
+                    vec.extend([n_h, n_rho, min(1.0, dist / 30.0), min(1.0, width / 5.0), n_exit_norm])
                 else:
-                    vec.extend([0.0, 0.0, 0.0, 0.0])
+                    vec.extend([0.0, 0.0, 0.0, 0.0, 0.0])
 
             obs_dict[agent] = np.array(vec, dtype=np.float32)
 
@@ -223,7 +236,7 @@ class IndustrialEvacuationEnv(ParallelEnv):
 
     def step(
         self,
-        actions: Dict[str, np.ndarray],
+        actions: Dict[str, Any],
     ) -> Tuple[
         Dict[str, np.ndarray],
         Dict[str, float],
@@ -233,74 +246,71 @@ class IndustrialEvacuationEnv(ParallelEnv):
     ]:
         """
         Executes one policy step:
-          1. Validates four-state actions and writes them to physical signboards.
+          1. Translates single primary exit arrow actions into physical 6-corridor signboard states.
           2. Runs continuous SFM physics sub-steps (DECISION_DT seconds).
-          3. Evaluates cooperative multi-objective team reward.
+          3. Evaluates cooperative multi-objective team reward with dense progress shaping.
         """
-        # 1. Validate policy commands and write them directly to signboards.
-        # The MARL path does not update or query a shortest-path router; the neural
-        # GREEN_ARROW action is the sole directional instruction.
         flipping_penalty = 0.0
-        directional_penalty = 0.0
         safety_interventions = 0
         safe_actions: Dict[str, np.ndarray] = {}
 
         for agent, act in actions.items():
+            act_idx = int(np.asarray(act).item()) if isinstance(act, (np.ndarray, list)) else int(act)
+            prev_act = self.prev_actions.get(agent, self.MAX_CORRIDORS)
             nbrs = self.agent_neighbors.get(agent, [])
-            prev_act = self.prev_actions.get(agent, np.zeros(self.MAX_CORRIDORS, dtype=np.int64))
-            action_vec = np.asarray(act, dtype=np.int64).copy()
-            if action_vec.shape != (self.MAX_CORRIDORS,):
-                raise ValueError(
-                    f"Action for {agent} must have shape ({self.MAX_CORRIDORS},), "
-                    f"got {action_vec.shape}."
-                )
-            if np.any((action_vec < 0) | (action_vec > 3)):
-                raise ValueError("Signboard action values must be in {0, 1, 2, 3}.")
-
             local_hazard = self.sim.hazard.levels.get(agent, 0.0)
-            valid_actions = action_vec[:min(len(nbrs), self.MAX_CORRIDORS)]
+
+            # Build physical 6-corridor action array for simulation engine:
+            # 0: NORMAL, 1: CAUTION, 2: BLOCKED, 3: GREEN ARROW
+            action_vec = np.zeros(self.MAX_CORRIDORS, dtype=np.int64)
 
             for k, nbr in enumerate(nbrs[:self.MAX_CORRIDORS]):
                 neighbor_hazard = self.sim.hazard.levels.get(nbr, 0.0)
-                a = int(action_vec[k])
-
-                # The simulator mirrors the hardware reflexive safety interlock so
-                # externally supplied commands cannot point people into danger.
                 if local_hazard >= 0.80 or neighbor_hazard >= 0.80:
-                    safe_a = 2
-                elif neighbor_hazard >= 0.30 and a in (0, 3):
-                    safe_a = 1
+                    action_vec[k] = 2  # BLOCKED (Red X)
+                    if k == act_idx:
+                        safety_interventions += 1
+                elif k == act_idx:
+                    action_vec[k] = 3  # GREEN ARROW
+                elif neighbor_hazard >= 0.30:
+                    action_vec[k] = 1  # CAUTION (Amber Detour)
                 else:
-                    safe_a = a
-                if safe_a != a:
-                    action_vec[k] = safe_a
-                    safety_interventions += 1
-                a = safe_a
+                    action_vec[k] = 0  # NORMAL (Open standby)
 
-                if a != prev_act[k]:
-                    flipping_penalty += 1.0
-
-            safe_count = 0 if local_hazard >= 0.80 else sum(
-                self.sim.hazard.levels.get(nbr, 0.0) < 0.80
-                for nbr in nbrs[:self.MAX_CORRIDORS]
-            )
-            green_count = int(np.sum(valid_actions == 3))
-            directional_penalty += max(0, green_count - 1)
-            if safe_count and green_count == 0:
-                directional_penalty += self.weights["arrow_missing"] / self.weights["arrow_surplus"]
+            # Anti-flipping penalty: penalize changing arrows unless local hazard shifted
+            if act_idx != prev_act and abs(local_hazard - self.last_hazards.get(agent, 0.0)) < 0.15:
+                flipping_penalty += 1.0
 
             safe_actions[agent] = action_vec
-            self.prev_actions[agent] = action_vec.copy()
+            self.prev_actions[agent] = act_idx
 
-        # Update local signboard actions directly in the simulation engine.  The
-        # external flag prevents its live-GUI inference loop from overwriting the
-        # rollout action during this environment decision interval.
+        # Update local signboard actions directly in the simulation engine.
         self.sim.set_signboard_actions(safe_actions, externally_controlled=True)
+
+        # Track active pedestrian exit distances BEFORE advancing physics
+        dist_before = {
+            p.id: self.exit_dists.get(p.current_node, 50.0)
+            for p in self.sim.agents
+            if p.state not in (PedestrianState.EVACUATED, PedestrianState.CASUALTY)
+        }
 
         # 2. Advance continuous SFM physics by DECISION_DT
         ticks = int(round(self.DECISION_DT / self.sim.DT))
         for _ in range(ticks):
             self.sim._tick()
+
+        # Track active pedestrian exit distances AFTER advancing physics
+        progress_sum = 0.0
+        for pid, d_start in dist_before.items():
+            ped = self.sim.agents[pid]
+            if ped.state == PedestrianState.EVACUATED:
+                progress_sum += d_start  # Reached exit, completed all remaining distance
+            elif ped.state != PedestrianState.CASUALTY:
+                d_end = self.exit_dists.get(ped.current_node, 50.0)
+                progress_sum += (d_start - d_end)
+
+        active_count = max(1, len(dist_before))
+        r_progress = float(np.clip(progress_sum / (active_count * self.DECISION_DT * 1.34), -1.5, 1.5))
 
         # 3. Compute metrics & rewards
         metrics = self.sim.metrics()
@@ -319,20 +329,18 @@ class IndustrialEvacuationEnv(ParallelEnv):
         ]
         cong_penalty = float(np.var(active_counts)) / (self.sim.num_evacuees ** 2 + 1e-6)
 
-        # Scale-invariant normalization across crowd density N in [20, 600]
+        # Scale-invariant normalization across crowd density N
         n_total = max(1, self.sim.num_evacuees)
         prop_evac = float(delta_evac) / n_total
         prop_cas = float(delta_cas) / n_total
-        flat_cas_penalty = self.weights.get("cas_flat", 5.0) if delta_cas > 0 else 0.0
 
         # Team reward shared equally across all edge router agents
         team_reward = (
             self.weights["evac"] * prop_evac
             - self.weights["cas"] * prop_cas
-            - flat_cas_penalty
+            + self.weights.get("progress", 15.0) * r_progress
             - self.weights["cong"] * cong_penalty
-            - self.weights["flip"] * (flipping_penalty / max(1, len(self.agents) * self.MAX_CORRIDORS))
-            - self.weights["arrow_surplus"] * (directional_penalty / max(1, len(self.agents)))
+            - self.weights["flip"] * (flipping_penalty / max(1, len(self.agents)))
         )
 
         rewards = {agent: team_reward for agent in self.agents}
@@ -352,6 +360,7 @@ class IndustrialEvacuationEnv(ParallelEnv):
                 "evacuated": evac_now,
                 "casualties": cas_now,
                 "sim_time": self.sim.t,
+                "progress_reward": r_progress,
                 "safety_interventions": safety_interventions,
             }
             for agent in self.agents

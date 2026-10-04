@@ -268,10 +268,12 @@ class SocialForceModel:
                         perp_y = agent.y - p_cy
                         d_perp = math.hypot(perp_x, perp_y)
                         if d_perp > r_c:
-                            scale_p = r_c / d_perp
-                            agent.x = p_cx + perp_x * scale_p
-                            agent.y = p_cy + perp_y * scale_p
-                            # Zero out velocity into wall
+                            excess = d_perp - r_c
+                            max_shift = 0.25  # Smooth physical nudge per step, strictly preventing teleportation jumps
+                            shift = min(excess, max_shift)
+                            agent.x -= (perp_x / d_perp) * shift
+                            agent.y -= (perp_y / d_perp) * shift
+                            # Damp lateral velocity into wall
                             v_tangent = agent.vx * ux_e + agent.vy * uy_e
                             agent.vx = v_tangent * ux_e
                             agent.vy = v_tangent * uy_e

@@ -27,6 +27,31 @@ def _build_adjacency_with_dist(edge_list):
     return adj
 
 
+def _compute_static_exit_distances(edge_list, exits, node_positions):
+    """Computes shortest topological distances from every node to the nearest exit."""
+    import networkx as nx
+    G = nx.Graph()
+    for src, tgt, dist, *_ in edge_list:
+        # Exclude elevator/hoist shafts from emergency egress paths (NFPA 101)
+        if "hoist" in src and "hoist" in tgt:
+            continue
+        G.add_edge(src, tgt, weight=float(dist))
+    for n in node_positions:
+        if n not in G:
+            G.add_node(n)
+    exit_dists = {}
+    for node in node_positions:
+        dists = []
+        for ex in exits:
+            try:
+                d = nx.shortest_path_length(G, node, ex, weight="weight")
+                dists.append(d)
+            except (nx.NetworkXNoPath, nx.NodeNotFound):
+                pass
+        exit_dists[node] = min(dists) if dists else 100.0
+    return exit_dists
+
+
 def _load_building():
     sys.path.insert(0, _REPO)
     try:
@@ -74,6 +99,9 @@ class Simulation:
         self.router  = DijkstraRouter()
         self.router.build(self.edge_list, self.exits, self.node_floors)
         self.sfm     = SocialForceModel(self.node_positions, self.node_floors, self.edge_list)
+        self.static_exit_dists = _compute_static_exit_distances(
+            self.edge_list, self.exits, self.node_positions
+        )
 
         self.agents: List[Pedestrian] = []
         self.t: float        = 0.0
@@ -123,10 +151,17 @@ class Simulation:
                     edges.append([u_idx, v_idx])
             self._policy_edge_index = torch.tensor(edges, dtype=torch.long).t()
             self._policy_action_masks = torch.zeros(
-                len(self.sorted_nodes), 6, dtype=torch.bool
+                len(self.sorted_nodes), 7, dtype=torch.bool
             )
             for idx, nid in enumerate(self.sorted_nodes):
-                self._policy_action_masks[idx, :min(6, len(self.agent_neighbors[nid]))] = True
+                nbrs = self.agent_neighbors[nid]
+                for k in range(min(6, len(nbrs))):
+                    nbr = nbrs[k]
+                    is_hoist = "hoist" in nid and "hoist" in nbr
+                    is_dead_end = len(self.agent_neighbors.get(nbr, [])) <= 1 and nbr not in self.exits
+                    if not is_hoist and not is_dead_end:
+                        self._policy_action_masks[idx, k] = True
+                self._policy_action_masks[idx, 6] = True  # Standby option always valid
 
             directional_ckpt = os.environ.get(
                 "ST_TBA_GAT_CHECKPOINT",
@@ -135,9 +170,12 @@ class Simulation:
             legacy_ckpt = os.path.join(_REPO, "checkpoints", "best_policy.pt")
             ckpt_path = directional_ckpt if os.path.exists(directional_ckpt) else legacy_ckpt
             if os.path.exists(ckpt_path):
-                self.policy_model = ST_TBA_GAT.load_checkpoint(ckpt_path, device="cpu")
+                try:
+                    self.policy_model = ST_TBA_GAT.load_checkpoint(ckpt_path, device="cpu")
+                except Exception:
+                    self.policy_model = ST_TBA_GAT(node_dim=41, hidden_dim=64, max_corridors=6)
             else:
-                self.policy_model = ST_TBA_GAT(node_dim=34, hidden_dim=64, max_corridors=6)
+                self.policy_model = ST_TBA_GAT(node_dim=41, hidden_dim=64, max_corridors=6)
             self.policy_model.eval()
             self._policy_hidden = torch.zeros(len(self.sorted_nodes), 64)
             self._last_hazards = {nid: 0.0 for nid in self.sorted_nodes}
@@ -164,6 +202,8 @@ class Simulation:
         import networkx as nx
         g_geom = nx.Graph()
         for s, t, d, w in self.edge_list:
+            if "hoist" in s and "hoist" in t:
+                continue  # Elevators/hoists are strictly excluded from static emergency exit paths
             g_geom.add_edge(s, t, weight=d)
         self._static_paths = {}
         for nid in self.node_positions:
@@ -231,7 +271,13 @@ class Simulation:
             for k, nbr in enumerate(nbrs[:6]):
                 act_code = int(acts[k]) if (acts is not None and k < len(acts)) else 0
                 hn = self.hazard.levels.get(nbr, 0.0)
-                is_blocked = (current_node in self.hazard.blocked or nbr in self.hazard.blocked or act_code == 2 or hn >= 0.80)
+                is_blocked = (
+                    current_node in self.hazard.blocked
+                    or nbr in self.hazard.blocked
+                    or act_code == 2
+                    or hn >= 0.80
+                    or ("hoist" in current_node and "hoist" in nbr)  # Elevators/hoists de-energized during emergency
+                )
 
                 if is_blocked:
                     continue  # Red X: impassable barrier
@@ -246,20 +292,31 @@ class Simulation:
                 else:
                     normal_corridors.append(nbr)
 
-            def choose(corridors: List[str]) -> Optional[str]:
-                if not corridors:
-                    return None
-                # Prioritize direct exit if reachable
-                for nbr in corridors:
+            # 1. Prioritize designated green arrow corridors moving forward (away from prev_node)
+            forward_green = [nbr for nbr in green_corridors if nbr != prev_node]
+            if forward_green:
+                for nbr in forward_green:
                     if nbr in self.exits:
                         return nbr
-                forward = [nbr for nbr in corridors if nbr != prev_node]
-                candidates = forward or corridors
-                # Multiple policy arrows intentionally split a crowd at the local
-                # controller rather than creating a hidden centralized tie-breaker.
-                return candidates[agent_id % len(candidates)]
+                return min(forward_green, key=lambda n: self.static_exit_dists.get(n, 999.0))
 
-            return choose(green_corridors) or choose(amber_corridors) or choose(normal_corridors)
+            # 2. If green arrow is absent or erroneously points backward to prev_node,
+            # advance along forward corridors minimizing static distance to nearest exit
+            forward_open = [nbr for nbr in (normal_corridors + amber_corridors) if nbr != prev_node]
+            if forward_open:
+                for nbr in forward_open:
+                    if nbr in self.exits:
+                        return nbr
+                return min(forward_open, key=lambda n: self.static_exit_dists.get(n, 999.0))
+
+            # 3. Only backtrack if at an absolute dead-end with zero forward unblocked corridors
+            all_open = green_corridors or normal_corridors or amber_corridors
+            if all_open:
+                for nbr in all_open:
+                    if nbr in self.exits:
+                        return nbr
+                return min(all_open, key=lambda n: self.static_exit_dists.get(n, 999.0))
+            return None
 
         # ── 2. STATIC NFPA MODE: Fixed geometric signs ───────────────────
         elif self.policy_mode == "static":
@@ -394,29 +451,57 @@ class Simulation:
                 continue
 
             target_id = agent.path[0] if agent.path else None
-            needs_reroute = force or not agent.path
+            needs_reroute = not agent.path
+            target_is_blocked = False
+
             if target_id:
                 tgt_h = self.hazard.levels.get(target_id, 0.0)
                 tgt_blk = target_id in self.hazard.blocked
-                if tgt_h >= 0.80 or tgt_blk:
-                    needs_reroute = True
-                elif self.policy_mode == "marl":
+                curr_blk = agent.current_node in self.hazard.blocked
+                is_edge_blk = (
+                    tgt_h >= 0.80
+                    or tgt_blk
+                    or curr_blk
+                    or ("hoist" in agent.current_node and "hoist" in target_id)
+                )
+                if not is_edge_blk and self.policy_mode == "marl":
                     acts = self.signboard_actions.get(agent.current_node)
                     nbrs = self.agent_neighbors.get(agent.current_node, [])
                     if acts is not None and target_id in nbrs:
                         k = nbrs.index(target_id)
-                        if int(acts[k]) == 2:  # Signboard turned to BLOCK
-                            needs_reroute = True
+                        if int(acts[k]) == 2:  # Corridor explicitly blocked by safety interlock
+                            is_edge_blk = True
+
+                if is_edge_blk:
+                    target_is_blocked = True
+                    needs_reroute = True
 
             if needs_reroute:
-                src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, self.node_floors, agent.floor)
-                next_hop = self.get_next_waypoint(src, agent.floor, agent.id, prev_node=getattr(agent, "prev_node", ""))
-                if next_hop:
-                    agent.path = [next_hop]
-                    agent.state = PedestrianState.MOVING
-                else:
-                    agent.path = []
-                    agent.state = PedestrianState.REROUTING
+                if target_id and target_is_blocked:
+                    # Corridor ahead is impassable: smoothly reverse direction along the same corridor
+                    orig_node = agent.current_node
+                    if orig_node and orig_node != target_id:
+                        agent.path = [orig_node]
+                        agent.prev_node = target_id
+                        agent.current_node = target_id
+                        agent.state = PedestrianState.REROUTING
+                    else:
+                        src = _nearest_node(agent.x, agent.y, self.node_positions, self.node_floors, agent.floor)
+                        next_hop = self.get_next_waypoint(src, agent.floor, agent.id, prev_node=getattr(agent, "prev_node", ""))
+                        if next_hop:
+                            agent.current_node = src
+                            agent.path = [next_hop]
+                            agent.state = PedestrianState.MOVING
+                elif not agent.path:
+                    src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, self.node_floors, agent.floor)
+                    next_hop = self.get_next_waypoint(src, agent.floor, agent.id, prev_node=getattr(agent, "prev_node", ""))
+                    if next_hop:
+                        agent.current_node = src
+                        agent.path = [next_hop]
+                        agent.state = PedestrianState.MOVING
+                    else:
+                        agent.path = []
+                        agent.state = PedestrianState.REROUTING
 
     def _update_states(self):
         for agent in self.agents:
@@ -524,11 +609,12 @@ class Simulation:
                 density - self._last_crowds.get(node_id, 0.0),
                 min(1.0, self.t / 120.0),
                 1.0 if self.alarm_active else 0.0,
+                min(1.0, self.static_exit_dists.get(node_id, 50.0) / 100.0),
             ]
             for corridor_idx in range(6):
                 neighbours = self.agent_neighbors[node_id]
                 if corridor_idx >= len(neighbours):
-                    features.extend([0.0, 0.0, 0.0, 0.0])
+                    features.extend([0.0, 0.0, 0.0, 0.0, 0.0])
                     continue
                 neighbour = neighbours[corridor_idx]
                 neighbour_capacity = max(1, self.node_capacities.get(neighbour, 10))
@@ -541,6 +627,7 @@ class Simulation:
                     neighbour_density,
                     min(1.0, distance / 30.0),
                     min(1.0, width / 5.0),
+                    min(1.0, self.static_exit_dists.get(neighbour, 50.0) / 100.0),
                 ])
             observations.append(features)
             self._last_hazards[node_id] = hazard
@@ -569,9 +656,50 @@ class Simulation:
                     action_masks=self._policy_action_masks,
                     deterministic=True,
                 )
-            self.set_signboard_actions(
-                {node_id: actions.cpu().numpy()[idx] for idx, node_id in enumerate(self.sorted_nodes)}
-            )
+            actions_np = actions.cpu().numpy()
+            signboard_dict = {}
+            for idx, node_id in enumerate(self.sorted_nodes):
+                act_k = int(actions_np[idx]) if actions_np.ndim == 1 else int(actions_np[idx, 0])
+                nbrs = self.agent_neighbors.get(node_id, [])
+                phys_act = np.zeros(6, dtype=np.int64)
+                loc_h = self.hazard.levels.get(node_id, 0.0)
+
+                arrow_idx = None
+                if act_k < len(nbrs):
+                    nbr = nbrs[act_k]
+                    nbr_h = self.hazard.levels.get(nbr, 0.0)
+                    is_dead_end = len(self.agent_neighbors.get(nbr, [])) <= 1 and nbr not in self.exits
+                    is_hoist = "hoist" in node_id and "hoist" in nbr
+                    if loc_h < 0.80 and nbr_h < 0.80 and not is_dead_end and not is_hoist:
+                        arrow_idx = act_k
+
+                # When alarm is active, ensure every controller shows an authoritative exit route
+                if self.alarm_active and arrow_idx is None and node_id not in self.exits:
+                    safe_nbrs = []
+                    for c_idx, neighbour in enumerate(nbrs[:6]):
+                        nbr_h = self.hazard.levels.get(neighbour, 0.0)
+                        is_dead_end = len(self.agent_neighbors.get(neighbour, [])) <= 1 and neighbour not in self.exits
+                        is_hoist = "hoist" in node_id and "hoist" in neighbour
+                        if loc_h < 0.80 and nbr_h < 0.80 and not is_dead_end and not is_hoist:
+                            safe_nbrs.append((c_idx, neighbour))
+                    if safe_nbrs:
+                        best_c_idx, _ = min(safe_nbrs, key=lambda pair: self.static_exit_dists.get(pair[1], 999.0))
+                        arrow_idx = best_c_idx
+
+                for c_idx, neighbour in enumerate(nbrs[:6]):
+                    nbr_h = self.hazard.levels.get(neighbour, 0.0)
+                    is_hoist = "hoist" in node_id and "hoist" in neighbour
+                    if loc_h >= 0.80 or nbr_h >= 0.80 or is_hoist:
+                        phys_act[c_idx] = 2  # BLOCKED
+                    elif c_idx == arrow_idx:
+                        phys_act[c_idx] = 3  # ARROW
+                    elif nbr_h >= 0.30:
+                        phys_act[c_idx] = 1  # CAUTION (moderate smoke/hazard)
+                    else:
+                        phys_act[c_idx] = 0  # NORMAL
+                signboard_dict[node_id] = phys_act
+
+            self.set_signboard_actions(signboard_dict)
             self._last_policy_decision = self.t
             self.policy_inference_error = None
         except Exception as error:
@@ -594,6 +722,7 @@ class Simulation:
                     or upstream_hazard >= 0.80
                     or downstream_hazard >= 0.80
                     or action_code == 2
+                    or ("hoist" in node_id and "hoist" in neighbour)
                 ):
                     action = "BLOCKED"
                 elif action_code == 1 or downstream_hazard >= 0.30:

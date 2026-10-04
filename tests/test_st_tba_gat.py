@@ -6,7 +6,7 @@ from simulator.policy.st_tba_gat import ST_TBA_GAT, GATv2Layer, ReflexiveSafetyO
 class TestSTTBAGATPolicy(unittest.TestCase):
     def setUp(self):
         self.num_nodes = 36
-        self.node_dim = 34
+        self.node_dim = 41
         self.hidden_dim = 64
         self.max_corridors = 6
 
@@ -32,8 +32,8 @@ class TestSTTBAGATPolicy(unittest.TestCase):
             deterministic=True,
         )
 
-        self.assertEqual(actions.shape, (self.num_nodes, self.max_corridors))
-        self.assertTrue(torch.all((actions >= 0) & (actions < 4)))
+        self.assertEqual(actions.shape, (self.num_nodes,))
+        self.assertTrue(torch.all((actions >= 0) & (actions < 7)))
         self.assertEqual(log_probs.shape, (self.num_nodes,))
         self.assertEqual(h_new.shape, (self.num_nodes, self.hidden_dim))
         self.assertEqual(val.shape, (1,))
@@ -59,7 +59,7 @@ class TestSTTBAGATPolicy(unittest.TestCase):
     def test_evaluate_actions_and_backprop(self):
         x = torch.randn(self.num_nodes, self.node_dim)
         h = torch.zeros(self.num_nodes, self.hidden_dim)
-        actions = torch.randint(0, 4, (self.num_nodes, self.max_corridors))
+        actions = torch.randint(0, 7, (self.num_nodes,))
 
         values, log_probs, entropy = self.model.evaluate_actions(
             node_features=x,

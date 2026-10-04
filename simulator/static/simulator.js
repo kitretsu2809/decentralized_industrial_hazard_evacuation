@@ -879,7 +879,7 @@ function showSignTooltip(cx, cy, signItem) {
   hzEl.textContent = `${(hz * 100).toFixed(0)}% Downstream Corridor Hazard`;
   hzEl.style.color = hz > 0.4 ? "var(--red)" : hz > 0.15 ? "var(--orange)" : "var(--text-muted)";
 
-  const occ = liveOccupancy(u.id, u.floor);
+  const occ = liveOccupancy(u.id, u.floor, v.id);
   document.getElementById("tt-occupancy").textContent = `${occ} persons at controller`;
 
   updateSignTooltipStatus(act);
@@ -936,12 +936,17 @@ function showTooltip(cx, cy, node) {
   tooltip.classList.add("visible");
 }
 
-function liveOccupancy(nodeId, floor) {
+function liveOccupancy(nodeId, floor, targetId = null) {
   if (!lastState || !lastState.pedestrians) return 0;
-  return lastState.pedestrians.filter(a =>
-    a.current_node === nodeId && a.floor === floor &&
-    a.state !== "evacuated" && a.state !== "casualty"
-  ).length;
+  const node = (building && building.nodes) ? building.nodes[nodeId] : null;
+  return lastState.pedestrians.filter(a => {
+    if (a.state === "evacuated" || a.state === "casualty") return false;
+    if (a.floor !== floor) return false;
+    if (a.current_node === nodeId || a.target_node === nodeId) return true;
+    if (targetId && a.current_node === nodeId && a.target_node === targetId) return true;
+    if (node && Math.hypot(a.x - node.x, a.y - node.y) <= 4.5) return true;
+    return false;
+  }).length;
 }
 
 function updateSignTooltipStatus(action) {
@@ -968,7 +973,7 @@ function refreshLiveTooltip() {
   if (hoverSign) {
     const { u, v } = hoverSign;
     document.getElementById("tt-occupancy").textContent =
-      `${liveOccupancy(u.id, u.floor)} persons at controller`;
+      `${liveOccupancy(u.id, u.floor, v.id)} persons at controller`;
 
     const liveSign = lastState.signboards && lastState.signboards[u.id]
       ? lastState.signboards[u.id].find(sign => sign.target === v.id)

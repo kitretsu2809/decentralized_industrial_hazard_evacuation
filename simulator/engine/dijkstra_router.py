@@ -30,6 +30,9 @@ class DijkstraRouter:
         """
         self.G = nx.Graph()
         for src, tgt, dist, *_ in edges:
+            # Under NFPA 101 Life Safety Code, elevator/hoist shafts are never approved egress routes
+            if "hoist" in src and "hoist" in tgt:
+                continue
             self.G.add_edge(src, tgt, distance=dist, weight=dist)
         self.exits      = exits
         self.node_floors = node_floors
