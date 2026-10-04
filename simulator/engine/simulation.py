@@ -4,7 +4,9 @@ Speed multiplier correctly controls how many physics steps run per wall-second.
 """
 from __future__ import annotations
 import sys, os, asyncio, math, random, time
-from typing import Dict, List, Optional, Callable, Awaitable
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Awaitable
+
+import numpy as np
 
 _REPO = os.path.join(os.path.dirname(__file__), "..", "..")
 if _REPO not in sys.path:
@@ -57,6 +59,7 @@ def _load_building():
 
 class Simulation:
     DT = 0.1            # physics timestep (seconds) — keep ≤0.1 for SFM stability
+    POLICY_DECISION_DT = 1.0  # seconds between live neural signboard decisions
 
     def __init__(self):
         (self.node_positions, self.node_floors, self.node_types,
@@ -85,17 +88,18 @@ class Simulation:
         self.policy_mode: str = "dijkstra"  # "dijkstra" | "marl" | "static"
         self.policy_multipliers: Dict[Tuple[str, str], float] = {}
         self.signboard_actions: Dict[str, np.ndarray] = {}
+        self._externally_controlled_signboards: bool = False
+        self._last_policy_decision: float = -math.inf
         self._static_paths: Dict[str, List[str]] = {}
-        self._exit_distances: Dict[str, float] = {}
         self.active_comm_nodes: Optional[Set[str]] = None
         self.policy_model = None
         self._policy_edge_index = None
+        self._policy_action_masks = None
         self._policy_hidden = None
         self._last_hazards = {}
         self._last_crowds = {}
         self._compute_static_paths()
         self._init_policy()
-        self._update_exit_distances()
 
         self._init_agents()
 
@@ -118,8 +122,18 @@ class Simulation:
                     v_idx = self.node_to_idx[nbr]
                     edges.append([u_idx, v_idx])
             self._policy_edge_index = torch.tensor(edges, dtype=torch.long).t()
+            self._policy_action_masks = torch.zeros(
+                len(self.sorted_nodes), 6, dtype=torch.bool
+            )
+            for idx, nid in enumerate(self.sorted_nodes):
+                self._policy_action_masks[idx, :min(6, len(self.agent_neighbors[nid]))] = True
 
-            ckpt_path = os.path.join(_REPO, "checkpoints", "best_policy.pt")
+            directional_ckpt = os.environ.get(
+                "ST_TBA_GAT_CHECKPOINT",
+                os.path.join(_REPO, "checkpoints", "directional", "best_policy.pt"),
+            )
+            legacy_ckpt = os.path.join(_REPO, "checkpoints", "best_policy.pt")
+            ckpt_path = directional_ckpt if os.path.exists(directional_ckpt) else legacy_ckpt
             if os.path.exists(ckpt_path):
                 self.policy_model = ST_TBA_GAT.load_checkpoint(ckpt_path, device="cpu")
             else:
@@ -136,6 +150,10 @@ class Simulation:
             self.policy_mode = mode
             if mode == "marl" and self.policy_model is None:
                 self._init_policy()
+            if mode == "marl":
+                self._externally_controlled_signboards = False
+                self._reset_policy_memory()
+                self._refresh_live_policy_actions(force=True)
             if mode == "static":
                 self.policy_multipliers = {}
                 self.router.update_weights({}, set())  # Reset to static geometric distance
@@ -162,67 +180,32 @@ class Simulation:
                     continue
             self._static_paths[nid] = best_p
 
-    def _update_exit_distances(self):
-        """Computes shortest passable distance from all nodes to exits based on active hazard & MARL blockades."""
-        import networkx as nx
-        g_pass = nx.Graph()
-        blkd = self.hazard.blocked
-        haz = self.hazard.levels
-        acts = getattr(self, "signboard_actions", {})
+    def _reset_policy_memory(self):
+        """Resets recurrent inference state at scenario and controller boundaries."""
+        if self.policy_model is None:
+            return
+        import torch
+        self._policy_hidden = torch.zeros(len(self.sorted_nodes), self.policy_model.hidden_dim)
+        self._last_hazards = {nid: 0.0 for nid in self.sorted_nodes}
+        self._last_crowds = {nid: 0.0 for nid in self.sorted_nodes}
+        self._last_policy_decision = -math.inf
 
-        for s, t, d, w in self.edge_list:
-            if s in blkd or t in blkd:
-                continue
-            hs = haz.get(s, 0.0)
-            ht = haz.get(t, 0.0)
-            if hs >= 0.80 or ht >= 0.80:
-                continue
+    def set_signboard_actions(
+        self,
+        actions: Dict[str, Any],
+        externally_controlled: bool = False,
+    ):
+        """Sets direct four-state commands for every signboard controller.
 
-            # Check MARL signboard actions on this edge
-            is_blocked = False
-            cost_mult = 1.0
-            nbrs_s = self.agent_neighbors.get(s, [])
-            if s in acts and t in nbrs_s:
-                k = nbrs_s.index(t)
-                a = int(acts[s][k]) if k < len(acts[s]) else 0
-                if a == 2:
-                    is_blocked = True
-                elif a == 1:
-                    cost_mult = max(cost_mult, 5.0)
-
-            nbrs_t = self.agent_neighbors.get(t, [])
-            if t in acts and s in nbrs_t:
-                k = nbrs_t.index(s)
-                a = int(acts[t][k]) if k < len(acts[t]) else 0
-                if a == 2:
-                    is_blocked = True
-                elif a == 1:
-                    cost_mult = max(cost_mult, 5.0)
-
-            if is_blocked:
-                continue
-
-            edge_w = d * (1.0 + 15.0 * max(hs, ht)**2) * cost_mult
-            g_pass.add_edge(s, t, weight=edge_w)
-
-        valid_exits = [ex for ex in self.exits if ex in g_pass]
-        if valid_exits:
-            try:
-                self._exit_distances = nx.multi_source_dijkstra_path_length(
-                    g_pass, sources=valid_exits, weight="weight"
-                )
-            except Exception:
-                self._exit_distances = {}
-        else:
-            self._exit_distances = {}
-
-        for ex in self.exits:
-            self._exit_distances[ex] = 0.0
-
-    def set_signboard_actions(self, actions: Dict[str, Any]):
-        """Sets the active corridor control states for all signboards from MARL policy."""
-        self.signboard_actions = actions
-        self._update_exit_distances()
+        In MARL rollouts the environment supplies an external action once per decision
+        interval.  The flag keeps the GUI's local inference loop from replacing that
+        sampled action before the physics has consumed it.
+        """
+        self.signboard_actions = {
+            node_id: np.asarray(action, dtype=np.int64).copy()
+            for node_id, action in actions.items()
+        }
+        self._externally_controlled_signboards = externally_controlled
 
     def get_next_waypoint(self, current_node: str, floor: int, agent_id: int = 0, prev_node: str = "") -> Optional[str]:
         """
@@ -241,19 +224,11 @@ class Simulation:
         # ── 1. MARL MODE: Local Signboard Guidance (Hop-by-Hop) ──────────
         if self.policy_mode == "marl":
             acts = self.signboard_actions.get(current_node, None)
-            exit_d = getattr(self, "_exit_distances", {})
-
             green_corridors = []
             amber_corridors = []
+            normal_corridors = []
 
             for k, nbr in enumerate(nbrs[:6]):
-                # If neighbor is directly an exit and passable, take it immediately
-                if nbr in self.exits:
-                    hn = self.hazard.levels.get(nbr, 0.0)
-                    act_code = int(acts[k]) if (acts is not None and k < len(acts)) else 0
-                    if not (current_node in self.hazard.blocked or nbr in self.hazard.blocked or act_code == 2 or hn >= 0.80):
-                        return nbr
-
                 act_code = int(acts[k]) if (acts is not None and k < len(acts)) else 0
                 hn = self.hazard.levels.get(nbr, 0.0)
                 is_blocked = (current_node in self.hazard.blocked or nbr in self.hazard.blocked or act_code == 2 or hn >= 0.80)
@@ -261,31 +236,30 @@ class Simulation:
                 if is_blocked:
                     continue  # Red X: impassable barrier
 
-                rem_dist = exit_d.get(nbr, float("inf"))
-                if rem_dist == float("inf"):
-                    continue  # Trapped dead end
-
-                score = rem_dist + 20.0 * hn
-                if prev_node and nbr == prev_node:
-                    score += 35.0  # Directional momentum: penalize 180-degree turnaround
-
-                if act_code == 0:
-                    green_corridors.append((nbr, score))
+                # GREEN_ARROW is the controller's direct route command.  No shortest
+                # path cost, exit-distance field, or central graph search participates
+                # in this choice.
+                if act_code == 3:
+                    green_corridors.append(nbr)
                 elif act_code == 1:
-                    amber_corridors.append((nbr, score + 15.0))
+                    amber_corridors.append(nbr)
+                else:
+                    normal_corridors.append(nbr)
 
-            # Primary: Green Arrow corridors (sorted by shortest distance to exit + least hazard)
-            if green_corridors:
-                green_corridors.sort(key=lambda item: item[1])
-                return green_corridors[0][0]
+            def choose(corridors: List[str]) -> Optional[str]:
+                if not corridors:
+                    return None
+                # Prioritize direct exit if reachable
+                for nbr in corridors:
+                    if nbr in self.exits:
+                        return nbr
+                forward = [nbr for nbr in corridors if nbr != prev_node]
+                candidates = forward or corridors
+                # Multiple policy arrows intentionally split a crowd at the local
+                # controller rather than creating a hidden centralized tie-breaker.
+                return candidates[agent_id % len(candidates)]
 
-            # Secondary: Amber Detour corridors
-            if amber_corridors:
-                amber_corridors.sort(key=lambda item: item[1])
-                return amber_corridors[0][0]
-
-            # All corridors blocked / Red X
-            return None
+            return choose(green_corridors) or choose(amber_corridors) or choose(normal_corridors)
 
         # ── 2. STATIC NFPA MODE: Fixed geometric signs ───────────────────
         elif self.policy_mode == "static":
@@ -314,8 +288,11 @@ class Simulation:
         self.hazard.reset()
         self.router.update_weights({}, set())
         self.signboard_actions = {}
-        self._update_exit_distances()
+        self._externally_controlled_signboards = False
+        self._reset_policy_memory()
         self._init_agents()
+        if self.policy_mode == "marl":
+            self._refresh_live_policy_actions(force=True)
         self.running = True   # auto-resume on reset
 
     def set_speed(self, speed): self.speed = max(0.1, min(10.0, speed))
@@ -355,6 +332,8 @@ class Simulation:
         self.hazard.inject(node_id, htype, min(1.0, max(0.0, intensity)))
         # Automatically trigger facility evacuation alarm upon hazard injection
         self.trigger_alarm()
+        if self.policy_mode == "marl" and not self._externally_controlled_signboards:
+            self._refresh_live_policy_actions(force=True)
         self._reroute_all(force=True)
         return True
 
@@ -394,10 +373,8 @@ class Simulation:
         if self.policy_mode == "static":
             pass  # NFPA 101 Static signage has fixed egress paths (pure geometric distance)
         elif self.policy_mode == "marl":
-            self.router.update_weights(
-                self.hazard.levels, self.hazard.blocked, self.policy_multipliers
-            )
-            self._update_exit_distances()
+            if not self._externally_controlled_signboards:
+                self._refresh_live_policy_actions()
         else:
             self.router.update_weights(
                 self.hazard.levels, self.hazard.blocked, active_nodes=self.active_comm_nodes
@@ -514,128 +491,143 @@ class Simulation:
             agent.state = PedestrianState.NORMAL
             agent.path = []
 
-    # ── Serialisation ─────────────────────────────────────────────────────────
+    # ── Direct ST-TBA-GAT inference and serialisation ─────────────────────────
+    def _policy_features(self):
+        """Builds the same 34-feature local observation used during MAPPO training."""
+        import torch
+
+        node_counts = {nid: 0 for nid in self.sorted_nodes}
+        for ped in self.agents:
+            if ped.state not in (PedestrianState.EVACUATED, PedestrianState.CASUALTY):
+                if ped.current_node in node_counts:
+                    node_counts[ped.current_node] += 1
+
+        edge_geometry = {}
+        for source, target, distance, width in self.edge_list:
+            edge_geometry[(source, target)] = (distance, width)
+            edge_geometry[(target, source)] = (distance, width)
+
+        observations = []
+        for node_id in self.sorted_nodes:
+            capacity = max(1, self.node_capacities.get(node_id, 10))
+            population = node_counts[node_id]
+            density = min(2.0, population / float(capacity))
+            hazard = self.hazard.levels.get(node_id, 0.0)
+            features = [
+                hazard,
+                density,
+                self.node_floors.get(node_id, 1) / 3.0,
+                1.0 if "stair" in node_id else 0.0,
+                1.0 if node_id in self.exits else 0.0,
+                min(1.0, capacity / 50.0),
+                hazard - self._last_hazards.get(node_id, 0.0),
+                density - self._last_crowds.get(node_id, 0.0),
+                min(1.0, self.t / 120.0),
+                1.0 if self.alarm_active else 0.0,
+            ]
+            for corridor_idx in range(6):
+                neighbours = self.agent_neighbors[node_id]
+                if corridor_idx >= len(neighbours):
+                    features.extend([0.0, 0.0, 0.0, 0.0])
+                    continue
+                neighbour = neighbours[corridor_idx]
+                neighbour_capacity = max(1, self.node_capacities.get(neighbour, 10))
+                neighbour_density = min(
+                    2.0, node_counts.get(neighbour, 0) / float(neighbour_capacity)
+                )
+                distance, width = edge_geometry.get((node_id, neighbour), (10.0, 2.0))
+                features.extend([
+                    self.hazard.levels.get(neighbour, 0.0),
+                    neighbour_density,
+                    min(1.0, distance / 30.0),
+                    min(1.0, width / 5.0),
+                ])
+            observations.append(features)
+            self._last_hazards[node_id] = hazard
+            self._last_crowds[node_id] = density
+        return torch.tensor(observations, dtype=torch.float32)
+
+    def _refresh_live_policy_actions(self, force: bool = False):
+        """Runs one local policy decision; it never consults a routing algorithm."""
+        if (
+            self.policy_mode != "marl"
+            or self.policy_model is None
+            or self._policy_edge_index is None
+            or self._externally_controlled_signboards
+            or (not force and self.t - self._last_policy_decision < self.POLICY_DECISION_DT)
+        ):
+            return
+        try:
+            import torch
+
+            node_features = self._policy_features()
+            with torch.no_grad():
+                actions, _, self._policy_hidden, _ = self.policy_model.act(
+                    node_features=node_features,
+                    edge_index=self._policy_edge_index,
+                    hidden_state=self._policy_hidden,
+                    action_masks=self._policy_action_masks,
+                    deterministic=True,
+                )
+            self.set_signboard_actions(
+                {node_id: actions.cpu().numpy()[idx] for idx, node_id in enumerate(self.sorted_nodes)}
+            )
+            self._last_policy_decision = self.t
+            self.policy_inference_error = None
+        except Exception as error:
+            # Preserve the last known-safe signboard command if inference fails.
+            self.policy_inference_error = str(error)
+
+    def _marl_signboards(self) -> Dict[str, List[Dict]]:
+        """Serialises cached four-state actions without changing the policy decision."""
+        signboards: Dict[str, List[Dict]] = {}
+        for node_id in self.sorted_nodes:
+            node_signs = []
+            upstream_hazard = self.hazard.levels.get(node_id, 0.0)
+            actions = self.signboard_actions.get(node_id, np.zeros(6, dtype=np.int64))
+            for corridor_idx, neighbour in enumerate(self.agent_neighbors.get(node_id, [])[:6]):
+                downstream_hazard = self.hazard.levels.get(neighbour, 0.0)
+                action_code = int(actions[corridor_idx]) if corridor_idx < len(actions) else 0
+                if (
+                    node_id in self.hazard.blocked
+                    or neighbour in self.hazard.blocked
+                    or upstream_hazard >= 0.80
+                    or downstream_hazard >= 0.80
+                    or action_code == 2
+                ):
+                    action = "BLOCKED"
+                elif action_code == 1 or downstream_hazard >= 0.30:
+                    action = "CAUTION"
+                elif action_code == 3:
+                    action = "ARROW"
+                else:
+                    action = "NORMAL"
+                node_signs.append({
+                    "target": neighbour,
+                    "action": action,
+                    "hazard": round(max(upstream_hazard, downstream_hazard), 2),
+                })
+            if node_signs:
+                signboards[node_id] = node_signs
+        return signboards
+
     def compute_signboards(self) -> Dict[str, List[Dict]]:
-        """
-        Computes the dynamic directional signage state for each edge router node.
-        Supports both:
-          - 'marl': ST-TBA-GAT neural policy edge guidance.
-          - 'dijkstra': Classical shortest safe path.
-        """
+        """Returns signboard state for the active policy without hidden rerouting."""
+        if self.policy_mode == "marl":
+            if not self.signboard_actions and not self._externally_controlled_signboards:
+                self._refresh_live_policy_actions(force=True)
+            return self._marl_signboards()
+
         if self.router.G is None:
             return {}
 
+        # Dijkstra remains available only as the explicitly selected centralized
+        # benchmark.  It is not part of ST-TBA-GAT sign selection or movement.
         import networkx as nx
-        adj = {}
-        for s, t, d, w in self.edge_list:
-            adj.setdefault(s, set()).add(t)
-            adj.setdefault(t, set()).add(s)
-
-        # ── 1. ST-TBA-GAT Neural MARL Policy ─────────────────────────────────
-        if self.policy_mode == "marl" and self.policy_model is not None and self._policy_edge_index is not None:
-            try:
-                import torch
-                node_counts = {nid: 0 for nid in self.sorted_nodes}
-                for ped in self.agents:
-                    if ped.state not in (PedestrianState.EVACUATED, PedestrianState.CASUALTY):
-                        if ped.current_node in node_counts:
-                            node_counts[ped.current_node] += 1
-
-                obs_list = []
-                for nid in self.sorted_nodes:
-                    cap = max(1, self.node_capacities.get(nid, 10))
-                    pop = node_counts.get(nid, 0)
-                    rho = min(2.0, pop / float(cap))
-                    h = self.hazard.levels.get(nid, 0.0)
-                    floor = self.node_floors.get(nid, 1) / 3.0
-                    is_stair = 1.0 if "stair" in nid else 0.0
-                    is_exit = 1.0 if nid in self.exits else 0.0
-                    cap_norm = min(1.0, cap / 50.0)
-                    delta_h = h - self._last_hazards.get(nid, 0.0)
-                    delta_rho = rho - self._last_crowds.get(nid, 0.0)
-                    time_ratio = min(1.0, self.t / 120.0)
-                    alarm_flag = 1.0 if self.alarm_active else 0.0
-
-                    vec = [h, rho, floor, is_stair, is_exit, cap_norm, delta_h, delta_rho, time_ratio, alarm_flag]
-                    nbrs = self.agent_neighbors.get(nid, [])
-                    for k in range(6):
-                        if k < len(nbrs):
-                            nbr = nbrs[k]
-                            n_h = self.hazard.levels.get(nbr, 0.0)
-                            n_pop = node_counts.get(nbr, 0)
-                            n_cap = max(1, self.node_capacities.get(nbr, 10))
-                            n_rho = min(2.0, n_pop / float(n_cap))
-                            dist, width = 10.0, 2.0
-                            for s, t, d, w in self.edge_list:
-                                if (s == nid and t == nbr) or (t == nid and s == nbr):
-                                    dist, width = d, w
-                                    break
-                            vec.extend([n_h, n_rho, min(1.0, dist / 30.0), min(1.0, width / 5.0)])
-                        else:
-                            vec.extend([0.0, 0.0, 0.0, 0.0])
-                    obs_list.append(vec)
-                    self._last_hazards[nid] = h
-                    self._last_crowds[nid] = rho
-
-                nf = torch.tensor(obs_list, dtype=torch.float32)
-                with torch.no_grad():
-                    actions_t, _, self._policy_hidden, _ = self.policy_model.act(
-                        node_features=nf,
-                        edge_index=self._policy_edge_index,
-                        hidden_state=self._policy_hidden,
-                        deterministic=True,
-                    )
-                actions_np = actions_t.cpu().numpy()
-
-                # Apply neural edge weights to graph
-                for i, u in enumerate(self.sorted_nodes):
-                    nbrs = self.agent_neighbors.get(u, [])
-                    for k, v in enumerate(nbrs[:6]):
-                        act_code = int(actions_np[i, k])
-                        cost = 1.0 if act_code == 0 else (5.0 if act_code == 1 else 999.0)
-                        if self.router.G.has_edge(u, v):
-                            bw = self.router.G[u][v].get("base_weight", 1.0)
-                            self.router.G[u][v]["weight"] = bw * cost
-
-                # Store active signboard actions
-                self.signboard_actions = {u: actions_np[i] for i, u in enumerate(self.sorted_nodes)}
-
-                signboards: Dict[str, List[Dict]] = {}
-                for i, u in enumerate(self.sorted_nodes):
-                    nbrs = self.agent_neighbors.get(u, [])
-                    if not nbrs:
-                        continue
-                    next_hop = self.get_next_waypoint(u, self.node_floors.get(u, 1))
-                    hu = self.hazard.levels.get(u, 0.0)
-                    u_blk = u in self.hazard.blocked
-
-                    node_signs = []
-                    for k, v in enumerate(nbrs[:6]):
-                        hv = self.hazard.levels.get(v, 0.0)
-                        he = max(hu, hv)
-                        act_code = int(actions_np[i, k])
-                        if u_blk or (v in self.hazard.blocked) or act_code == 2 or he >= 0.80:
-                            action = "BLOCKED"
-                        elif act_code == 1 or he >= 0.30:
-                            action = "CAUTION"
-                        elif self.alarm_active and v == next_hop:
-                            action = "ARROW"
-                        elif not self.alarm_active and v == next_hop:
-                            action = "NORMAL_ARROW"
-                        else:
-                            action = "NORMAL"
-
-                        node_signs.append({
-                            "target": v,
-                            "action": action,
-                            "hazard": round(he, 2),
-                        })
-                    signboards[u] = node_signs
-                return signboards
-            except Exception:
-                pass
-
-        # ── 2. Classical Dijkstra Baseline ───────────────────────────────────
+        adjacency = {}
+        for source, target, _distance, _width in self.edge_list:
+            adjacency.setdefault(source, set()).add(target)
+            adjacency.setdefault(target, set()).add(source)
         try:
             exit_paths = nx.multi_source_dijkstra_path(
                 self.router.G, self.exits, weight="weight"
@@ -644,45 +636,38 @@ class Simulation:
             exit_paths = {}
 
         signboards: Dict[str, List[Dict]] = {}
-        for u in self.node_positions:
-            nbrs = adj.get(u, set())
-            if not nbrs:
+        for node_id in self.node_positions:
+            neighbours = sorted(adjacency.get(node_id, set()))
+            if not neighbours:
                 continue
-
             next_hop = None
-            if u in exit_paths and len(exit_paths[u]) >= 2:
-                next_hop = exit_paths[u][-2]
-
-            hu = self.hazard.levels.get(u, 0.0)
-            u_blk = u in self.hazard.blocked
-
+            if node_id in exit_paths and len(exit_paths[node_id]) >= 2:
+                next_hop = exit_paths[node_id][-2]
+            upstream_hazard = self.hazard.levels.get(node_id, 0.0)
             node_signs = []
-            for v in nbrs:
-                hv = self.hazard.levels.get(v, 0.0)
-                he = max(hu, hv)
-                v_blk = v in self.hazard.blocked
-                is_blocked = u_blk or v_blk or (he >= 0.80)
-                is_caution = (he >= 0.30)
-
-                if is_blocked:
+            for neighbour in neighbours:
+                downstream_hazard = self.hazard.levels.get(neighbour, 0.0)
+                combined_hazard = max(upstream_hazard, downstream_hazard)
+                if (
+                    node_id in self.hazard.blocked
+                    or neighbour in self.hazard.blocked
+                    or combined_hazard >= 0.80
+                ):
                     action = "BLOCKED"
-                elif is_caution:
+                elif combined_hazard >= 0.30:
                     action = "CAUTION"
-                elif self.alarm_active and v == next_hop:
+                elif self.alarm_active and neighbour == next_hop:
                     action = "ARROW"
-                elif not self.alarm_active and v == next_hop:
+                elif not self.alarm_active and neighbour == next_hop:
                     action = "NORMAL_ARROW"
                 else:
                     action = "NORMAL"
-
                 node_signs.append({
-                    "target": v,
+                    "target": neighbour,
                     "action": action,
-                    "hazard": round(he, 2)
+                    "hazard": round(combined_hazard, 2),
                 })
-
-            signboards[u] = node_signs
-
+            signboards[node_id] = node_signs
         return signboards
 
     def state_dict(self):

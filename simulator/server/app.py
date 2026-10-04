@@ -71,6 +71,17 @@ async def building():
 async def state():
     return JSONResponse(sim.state_dict())
 
+
+@app.post("/api/disaster")
+async def inject_disaster(payload: dict):
+    """HTTP fallback for recorded demonstrations before a WebSocket is ready."""
+    ok = sim.inject_disaster(
+        payload.get("node_id", ""),
+        payload.get("hazard_type", "GAS_RELEASE"),
+        float(payload.get("intensity", 0.8)),
+    )
+    return {"ok": ok, "node": payload.get("node_id"), "hazard_type": payload.get("hazard_type")}
+
 # ── Static files ──────────────────────────────────────────────────────────────
 app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
 
@@ -130,4 +141,3 @@ async def websocket_endpoint(ws: WebSocket):
 
     except WebSocketDisconnect:
         manager.disconnect(ws)
-

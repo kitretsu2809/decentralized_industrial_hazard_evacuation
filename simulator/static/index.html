@@ -116,7 +116,7 @@
         <option value="random">🎲 Random Action Exploration (ε-greedy)</option>
       </select>
       <div style="font-size:0.68rem;color:var(--text-muted);line-height:1.35">
-        Each node displays dynamic signage: <span style="color:#4ade80;font-weight:600">➤ Green Arrow</span> (Allow/Exit), <span style="color:#f87171;font-weight:600">✖ Red X</span> (Block), or <span style="color:#fbbf24;font-weight:600">▲ Amber</span> (Detour).
+        Four-state controller output: <span style="color:#4ade80;font-weight:600">➤ Green Arrow</span> (direct neural route), <span style="color:#f87171;font-weight:600">✖ Red X</span> (block), <span style="color:#fbbf24;font-weight:600">▲ Amber</span> (caution), or Normal standby.
       </div>
     </div>
 
@@ -181,9 +181,9 @@
 
     <div class="sidebar-footer">
       <strong>Normal State:</strong> Workers dwell at workstations (no premature egress)<br>
-      <strong>Emergency State:</strong> Alarm/hazard triggers pre-movement hesitation delay ($\tau \sim 1\text{--}3\text{s}$) followed by Dijkstra routing<br>
+      <strong>Emergency State:</strong> Alarm/hazard triggers pre-movement hesitation delay ($\tau \sim 1\text{--}3\text{s}$) followed by local ST-TBA-GAT sign guidance<br>
       <strong>Physics:</strong> Helbing Social Force Model (1995)<br>
-      <em>Phase 1 Baseline</em> — benchmark environment for MARL training.
+      <em>ST-TBA-GAT mode</em> — decentralized four-state edge guidance; classical routing remains a selectable benchmark.
     </div>
 
   </div>

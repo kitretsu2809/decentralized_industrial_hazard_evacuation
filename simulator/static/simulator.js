@@ -157,11 +157,17 @@ canvas.addEventListener("touchend", () => { lastTouchDist = null; }, { passive: 
 let ws = null;
 function connectWS() {
   ws = new WebSocket(WS_URL);
+  // Guided demos use this public handle while normal controls use send().
+  window.simSocket = ws;
   ws.onopen = () => {
     setConn(true);
     send({action: "set_policy_mode", mode: signPolicy === "marl" ? "marl" : "dijkstra"});
   };
-  ws.onclose = () => { setConn(false); setTimeout(connectWS, 2000); };
+  ws.onclose = () => {
+    if (window.simSocket === ws) window.simSocket = null;
+    setConn(false);
+    setTimeout(connectWS, 2000);
+  };
   ws.onerror = () => ws.close();
   ws.onmessage = e => handleMessage(JSON.parse(e.data));
 }
@@ -194,6 +200,7 @@ function handleMessage(msg) {
     prevState   = lastState;
     lastState   = msg;
     updateMetrics(msg.metrics);
+    refreshLiveTooltip();
     updateSpeedDisplay(msg.speed);
     if (msg.alarm_active !== undefined) {
       updateAlarmStatus(msg.alarm_active);
@@ -872,27 +879,10 @@ function showSignTooltip(cx, cy, signItem) {
   hzEl.textContent = `${(hz * 100).toFixed(0)}% Downstream Corridor Hazard`;
   hzEl.style.color = hz > 0.4 ? "var(--red)" : hz > 0.15 ? "var(--orange)" : "var(--text-muted)";
 
-  const occ = lastState
-    ? lastState.pedestrians.filter(a => a.current_node === u.id && a.floor === currentFloor && a.state !== "evacuated" && a.state !== "casualty").length
-    : 0;
+  const occ = liveOccupancy(u.id, u.floor);
   document.getElementById("tt-occupancy").textContent = `${occ} persons at controller`;
 
-  const signEl = document.getElementById("tt-sign");
-  if (signEl) {
-    if (act === "ARROW") {
-      signEl.textContent = `➤ SAFE EXIT ARROW (${signPolicy === "marl" ? "ST-TBA-GAT AI" : "Dijkstra"})`;
-      signEl.style.color = "var(--green)";
-    } else if (act === "BLOCKED") {
-      signEl.textContent = "✖ CORRIDOR BLOCKED (Safety Interlock)";
-      signEl.style.color = "var(--red)";
-    } else if (act === "CAUTION") {
-      signEl.textContent = "▲ CAUTION DETOUR (Bottleneck/Smoke)";
-      signEl.style.color = "var(--yellow)";
-    } else {
-      signEl.textContent = "➤ NORMAL ARROW (Quiescent)";
-      signEl.style.color = "#38bdf8";
-    }
-  }
+  updateSignTooltipStatus(act);
 
   const rect = canvas.getBoundingClientRect();
   tooltip.style.left = `${Math.min(cx - rect.left + 14, logicalW() - 210)}px`;
@@ -908,9 +898,7 @@ function showTooltip(cx, cy, node) {
   if (rowTgt) rowTgt.style.display = "none";
 
   const hz  = lastState ? (lastState.hazards[node.id] || null) : null;
-  const occ = lastState
-    ? lastState.pedestrians.filter(a => a.current_node === node.id && a.floor === currentFloor && a.state !== "evacuated" && a.state !== "casualty").length
-    : 0;
+  const occ = liveOccupancy(node.id, node.floor);
   document.getElementById("tt-name").textContent      = node.id.replace(/_/g, " ");
   document.getElementById("tt-type").textContent      = node.type;
   document.getElementById("tt-floor").textContent     = `Floor ${node.floor}`;
@@ -946,6 +934,58 @@ function showTooltip(cx, cy, node) {
   tooltip.style.left = `${Math.min(cx - rect.left + 14, logicalW() - 180)}px`;
   tooltip.style.top  = `${Math.max(10, cy - rect.top - 80)}px`;
   tooltip.classList.add("visible");
+}
+
+function liveOccupancy(nodeId, floor) {
+  if (!lastState || !lastState.pedestrians) return 0;
+  return lastState.pedestrians.filter(a =>
+    a.current_node === nodeId && a.floor === floor &&
+    a.state !== "evacuated" && a.state !== "casualty"
+  ).length;
+}
+
+function updateSignTooltipStatus(action) {
+  const signEl = document.getElementById("tt-sign");
+  if (!signEl) return;
+  if (action === "ARROW") {
+    signEl.textContent = `➤ GREEN ARROW (${signPolicy === "marl" ? "ST-TBA-GAT" : "Dijkstra baseline"})`;
+    signEl.style.color = "var(--green)";
+  } else if (action === "BLOCKED") {
+    signEl.textContent = "✖ CORRIDOR BLOCKED (Safety Interlock)";
+    signEl.style.color = "var(--red)";
+  } else if (action === "CAUTION") {
+    signEl.textContent = "▲ CAUTION DETOUR (Bottleneck/Smoke)";
+    signEl.style.color = "var(--yellow)";
+  } else {
+    signEl.textContent = "• NORMAL (No active direction)";
+    signEl.style.color = "#38bdf8";
+  }
+}
+
+function refreshLiveTooltip() {
+  if (!lastState || !tooltip.classList.contains("visible")) return;
+
+  if (hoverSign) {
+    const { u, v } = hoverSign;
+    document.getElementById("tt-occupancy").textContent =
+      `${liveOccupancy(u.id, u.floor)} persons at controller`;
+
+    const liveSign = lastState.signboards && lastState.signboards[u.id]
+      ? lastState.signboards[u.id].find(sign => sign.target === v.id)
+      : null;
+    if (liveSign) {
+      hoverSign.action = liveSign.action;
+      hoverSign.hazard = liveSign.hazard;
+      const hazardEl = document.getElementById("tt-hazard");
+      hazardEl.textContent = `${(liveSign.hazard * 100).toFixed(0)}% Downstream Corridor Hazard`;
+      hazardEl.style.color = liveSign.hazard > 0.4 ? "var(--red)" : liveSign.hazard > 0.15 ? "var(--orange)" : "var(--text-muted)";
+      updateSignTooltipStatus(liveSign.action);
+    }
+  } else if (hoverNode && building && building.nodes[hoverNode]) {
+    const node = building.nodes[hoverNode];
+    document.getElementById("tt-occupancy").textContent =
+      `${liveOccupancy(node.id, node.floor)} persons`;
+  }
 }
 
 // ── Node list ──────────────────────────────────────────────────────────────────

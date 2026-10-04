@@ -28,7 +28,7 @@ def main():
 
     print("\n" + "=" * 60)
     print("  Industrial Evacuation Simulator")
-    print("  Phase 1: Classical Dijkstra Routing + Social Force Model")
+    print("  ST-TBA-GAT Direct Sign Guidance + Social Force Model")
     print("=" * 60)
     print(f"\n  ▶  Open browser:  http://{args.host}:{args.port}")
     print(f"     Ctrl+C to stop\n")

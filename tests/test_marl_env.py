@@ -16,6 +16,7 @@ class TestIndustrialEvacuationEnv(unittest.TestCase):
             act_space = self.env.action_spaces[agent]
             self.assertEqual(obs_space.shape, (34,))
             self.assertEqual(len(act_space.nvec), 6)
+            self.assertTrue(np.all(act_space.nvec == 4))
 
     def test_reset(self):
         obs, infos = self.env.reset(seed=123)
@@ -31,7 +32,7 @@ class TestIndustrialEvacuationEnv(unittest.TestCase):
     def test_step_execution(self):
         obs, infos = self.env.reset(seed=456)
         actions = {
-            agent: np.random.randint(0, 3, size=self.env.MAX_CORRIDORS)
+            agent: np.random.randint(0, 4, size=self.env.MAX_CORRIDORS)
             for agent in self.env.agents
         }
         next_obs, rewards, terminations, truncations, next_infos = self.env.step(actions)
@@ -85,15 +86,29 @@ class TestIndustrialEvacuationEnv(unittest.TestCase):
         u = self.env.agents[0]
         nbrs = self.env.agent_neighbors[u]
         if len(nbrs) >= 2:
-            # Set signboard u action: corridor 0 = BLOCK (2), corridor 1 = ALLOW (0)
+            # Set signboard u action: corridor 0 = BLOCKED (2), corridor 1 = GREEN ARROW (3).
             acts = np.zeros(6, dtype=np.int64)
             acts[0] = 2  # Block first corridor
-            acts[1] = 0  # Allow second corridor
+            acts[1] = 3  # Directly point to second corridor
             self.env.sim.set_signboard_actions({u: acts})
 
             chosen = self.env.sim.get_next_waypoint(u, floor=1)
             # Must choose corridor 1 (nbrs[1]), NOT blocked corridor 0
             self.assertEqual(chosen, nbrs[1])
+
+    def test_green_arrow_does_not_need_a_shortest_path_lookup(self):
+        """A direct GREEN_ARROW remains authoritative even if the router is unavailable."""
+        self.env.sim.set_policy_mode("marl")
+        u = self.env.agents[0]
+        nbrs = self.env.agent_neighbors[u]
+        if nbrs:
+            acts = np.zeros(6, dtype=np.int64)
+            acts[0] = 3
+            self.env.sim.set_signboard_actions({u: acts})
+            self.env.sim.router.get_path = lambda *_args, **_kwargs: self.fail(
+                "MARL sign guidance must not query Dijkstra."
+            )
+            self.assertEqual(self.env.sim.get_next_waypoint(u, floor=1), nbrs[0])
 
     def test_iso_13571_fed_accumulation(self):
         """Verifies cumulative FED dose accumulation and casualty trigger."""
@@ -150,4 +165,3 @@ class TestIndustrialEvacuationEnv(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

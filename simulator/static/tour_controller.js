@@ -65,7 +65,7 @@
       speedVal.textContent = `${mult.toFixed(1)}×`;
     }
     if (window.simSocket && window.simSocket.readyState === WebSocket.OPEN) {
-      window.simSocket.send(JSON.stringify({ type: 'set_speed', speed: mult }));
+      window.simSocket.send(JSON.stringify({ action: 'set_speed', speed: mult }));
     }
     return mult;
   };
@@ -83,7 +83,7 @@
     // Send disaster injection payload over websocket or HTTP
     if (window.simSocket && window.simSocket.readyState === WebSocket.OPEN) {
       window.simSocket.send(JSON.stringify({
-        type: 'inject_disaster',
+        action: 'inject_disaster',
         node_id: sc.node_id,
         hazard_type: sc.hazard_type,
         intensity: sc.intensity
@@ -96,10 +96,9 @@
       }).catch(err => console.warn('[TourController] Disaster injection fallback fetch:', err));
     }
 
-    const alarmBtn = document.getElementById('btn-alarm');
-    if (alarmBtn && !alarmBtn.classList.contains('active')) {
-      alarmBtn.click();
-    }
+    // The server arms the evacuation alarm atomically with hazard injection.
+    // Sending a second toggle here would race the WebSocket command and can
+    // accidentally cancel the alarm during a recorded demonstration.
     return sc;
   };
 
@@ -148,7 +147,7 @@
             element: '#policy-status',
             popover: {
               title: 'Step 4: Classical Greedy Bottleneck Breakdown',
-              description: 'Under classical dynamic shortest paths (D* Lite), all 250 occupants greedily converge on the single surviving stairwell, triggering severe doorway arching (jamming density ρ > 3.5 ped/m²), flow collapse to 0.05 m/s, and lethal crowd asphyxia.',
+              description: 'Under the centralized Dijkstra baseline, occupants can converge on the single surviving stairwell, creating doorway arching, flow collapse, and elevated crowd risk. The measured comparison should be used instead of this illustrative scenario text.',
               side: 'bottom',
               align: 'center'
             }

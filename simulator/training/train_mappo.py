@@ -111,6 +111,7 @@ class MAPPOTrainer:
         max_evacuees: int = 600,
         curriculum: bool = True,
         num_episodes: int = 100,
+        resume_checkpoint: Optional[str] = None,
     ):
         self.device = torch.device(
             device if device else ("cuda" if torch.cuda.is_available() else "cpu")
@@ -142,6 +143,10 @@ class MAPPOTrainer:
             gat_heads=4,
             gat_layers=2,
         ).to(self.device)
+        self.start_episode = 1
+        self.resume_checkpoint = resume_checkpoint
+        if resume_checkpoint:
+            self._resume_policy(resume_checkpoint)
 
         self.optimizer = optim.Adam(self.policy.parameters(), lr=self.lr, eps=1e-5)
         self.edge_index = torch.tensor(
@@ -153,6 +158,34 @@ class MAPPOTrainer:
 
         self.buffer = RolloutBuffer(
             self.num_agents, self.obs_dim, self.max_corridors, self.hidden_dim
+        )
+
+    def _resume_policy(self, checkpoint_path: str):
+        """Restores a compatible policy and continues after its saved episode.
+
+        Policy checkpoints intentionally remain portable for simulator inference, so
+        this resumes model parameters and curriculum position rather than optimizer
+        moments.  That is preferable to silently restarting from random weights after
+        an interrupted training job.
+        """
+        if not os.path.exists(checkpoint_path):
+            raise FileNotFoundError(f"Resume checkpoint does not exist: {checkpoint_path}")
+
+        payload = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+        restored = ST_TBA_GAT.load_checkpoint(checkpoint_path, device=str(self.device))
+        if restored.node_dim != self.obs_dim or restored.max_corridors != self.max_corridors:
+            raise ValueError(
+                "Resume checkpoint is incompatible with this environment: "
+                f"expected node_dim={self.obs_dim}, max_corridors={self.max_corridors}; "
+                f"got node_dim={restored.node_dim}, max_corridors={restored.max_corridors}."
+            )
+        self.policy = restored
+        previous_episode = int(payload.get("extra_meta", {}).get("episode", 0))
+        self.start_episode = max(1, previous_episode + 1)
+        logger.info(
+            "Resumed four-state policy from %s; continuing at episode %d.",
+            checkpoint_path,
+            self.start_episode,
         )
 
     def train_episode(self, episode_idx: int) -> Dict[str, float]:
@@ -386,11 +419,13 @@ class MAPPOTrainer:
         print("\n" + "=" * 80)
         print(f"🚀 STARTING ST-TBA-GAT MAPPO TRAINING")
         print(f"   Episodes: {num_episodes} | Device: {self.device} | Architecture: Pure PyTorch ST-TBA-GAT")
+        if self.resume_checkpoint:
+            print(f"   Resuming from episode {self.start_episode}: {self.resume_checkpoint}")
         print("=" * 80 + "\n")
 
         best_survival = 0.0
 
-        for ep in range(1, num_episodes + 1):
+        for ep in range(self.start_episode, num_episodes + 1):
             t0 = time.time()
             metrics = self.train_episode(ep)
             dt = time.time() - t0
@@ -611,6 +646,12 @@ if __name__ == "__main__":
     parser.add_argument("--eval", action="store_true", help="Run benchmark evaluation after training")
     parser.add_argument("--eval-only", action="store_true", help="Run only benchmark evaluation")
     parser.add_argument("--checkpoint", type=str, default=None, help="Path to checkpoint for evaluation")
+    parser.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        help="Resume model weights and curriculum at the episode after this checkpoint.",
+    )
     args = parser.parse_args()
 
     if args.eval_only:
@@ -624,6 +665,7 @@ if __name__ == "__main__":
             min_evacuees=args.min_evacuees,
             max_evacuees=args.max_evacuees,
             curriculum=args.curriculum,
+            resume_checkpoint=args.resume,
         )
         trainer.train(num_episodes=args.episodes)
         if args.eval:

@@ -23,10 +23,11 @@ class IndustrialEvacuationEnv(ParallelEnv):
     """
     PettingZoo ParallelEnv for 36-node edge router network.
     Observation space: local sensor features + 4-byte gossip + incident corridor states.
-    Action space: MultiDiscrete([3] * max_corridors) for incident directional signage:
-      0: ALLOW (Green Arrow)
-      1: REDIRECT (Amber Caution detour)
-      2: BLOCK (Red X blockade)
+    Action space: MultiDiscrete([4] * max_corridors) for incident directional signage:
+      0: NORMAL (no active direction)
+      1: CAUTION (amber detour)
+      2: BLOCKED (red X safety blockade)
+      3: GREEN ARROW (the policy's direct directional instruction)
     """
     metadata = {"name": "industrial_evacuation_v1", "render_modes": ["human"]}
 
@@ -80,7 +81,7 @@ class IndustrialEvacuationEnv(ParallelEnv):
             for agent in self.possible_agents
         }
         self.action_spaces: Dict[str, MultiDiscrete] = {
-            agent: MultiDiscrete([3] * self.MAX_CORRIDORS)
+            agent: MultiDiscrete([4] * self.MAX_CORRIDORS)
             for agent in self.possible_agents
         }
 
@@ -91,6 +92,8 @@ class IndustrialEvacuationEnv(ParallelEnv):
             "cas_flat": 5.0,  # Zero-tolerance penalty on any step where casualties occur
             "cong": 0.5,      # Penalty on corridor density variance
             "flip": 0.05,     # Penalty on rapid signage flickering
+            "arrow_surplus": 0.15,  # Discourage ambiguous multi-arrow controllers
+            "arrow_missing": 0.02,  # Encourage one actionable direction when safe
         }
 
         # Episode state tracking
@@ -230,36 +233,69 @@ class IndustrialEvacuationEnv(ParallelEnv):
     ]:
         """
         Executes one policy step:
-          1. Translates actions to signboards and corridor routing penalties.
+          1. Validates four-state actions and writes them to physical signboards.
           2. Runs continuous SFM physics sub-steps (DECISION_DT seconds).
           3. Evaluates cooperative multi-objective team reward.
         """
-        # 1. Update signboards and edge router penalties
-        edge_penalties = {}
+        # 1. Validate policy commands and write them directly to signboards.
+        # The MARL path does not update or query a shortest-path router; the neural
+        # GREEN_ARROW action is the sole directional instruction.
         flipping_penalty = 0.0
+        directional_penalty = 0.0
+        safety_interventions = 0
+        safe_actions: Dict[str, np.ndarray] = {}
 
         for agent, act in actions.items():
             nbrs = self.agent_neighbors.get(agent, [])
             prev_act = self.prev_actions.get(agent, np.zeros(self.MAX_CORRIDORS, dtype=np.int64))
+            action_vec = np.asarray(act, dtype=np.int64).copy()
+            if action_vec.shape != (self.MAX_CORRIDORS,):
+                raise ValueError(
+                    f"Action for {agent} must have shape ({self.MAX_CORRIDORS},), "
+                    f"got {action_vec.shape}."
+                )
+            if np.any((action_vec < 0) | (action_vec > 3)):
+                raise ValueError("Signboard action values must be in {0, 1, 2, 3}.")
+
+            local_hazard = self.sim.hazard.levels.get(agent, 0.0)
+            valid_actions = action_vec[:min(len(nbrs), self.MAX_CORRIDORS)]
 
             for k, nbr in enumerate(nbrs[:self.MAX_CORRIDORS]):
-                a = int(act[k])
+                neighbor_hazard = self.sim.hazard.levels.get(nbr, 0.0)
+                a = int(action_vec[k])
+
+                # The simulator mirrors the hardware reflexive safety interlock so
+                # externally supplied commands cannot point people into danger.
+                if local_hazard >= 0.80 or neighbor_hazard >= 0.80:
+                    safe_a = 2
+                elif neighbor_hazard >= 0.30 and a in (0, 3):
+                    safe_a = 1
+                else:
+                    safe_a = a
+                if safe_a != a:
+                    action_vec[k] = safe_a
+                    safety_interventions += 1
+                a = safe_a
+
                 if a != prev_act[k]:
                     flipping_penalty += 1.0
 
-                # Determine edge cost based on action:
-                # 0 = ALLOW: standard or slightly prioritized (1.0)
-                # 1 = REDIRECT: caution detour penalty (5.0)
-                # 2 = BLOCK: impassable barrier (999.0)
-                edge_cost = 1.0 if a == 0 else (5.0 if a == 1 else 999.0)
-                edge_penalties[(agent, nbr)] = edge_cost
-                edge_penalties[(nbr, agent)] = edge_cost
+            safe_count = 0 if local_hazard >= 0.80 else sum(
+                self.sim.hazard.levels.get(nbr, 0.0) < 0.80
+                for nbr in nbrs[:self.MAX_CORRIDORS]
+            )
+            green_count = int(np.sum(valid_actions == 3))
+            directional_penalty += max(0, green_count - 1)
+            if safe_count and green_count == 0:
+                directional_penalty += self.weights["arrow_missing"] / self.weights["arrow_surplus"]
 
-            self.prev_actions[agent] = act.copy()
+            safe_actions[agent] = action_vec
+            self.prev_actions[agent] = action_vec.copy()
 
-        # Update local signboard actions directly in simulation engine
-        self.sim.set_signboard_actions(actions)
-        self._apply_policy_to_router(edge_penalties)
+        # Update local signboard actions directly in the simulation engine.  The
+        # external flag prevents its live-GUI inference loop from overwriting the
+        # rollout action during this environment decision interval.
+        self.sim.set_signboard_actions(safe_actions, externally_controlled=True)
 
         # 2. Advance continuous SFM physics by DECISION_DT
         ticks = int(round(self.DECISION_DT / self.sim.DT))
@@ -296,6 +332,7 @@ class IndustrialEvacuationEnv(ParallelEnv):
             - flat_cas_penalty
             - self.weights["cong"] * cong_penalty
             - self.weights["flip"] * (flipping_penalty / max(1, len(self.agents) * self.MAX_CORRIDORS))
+            - self.weights["arrow_surplus"] * (directional_penalty / max(1, len(self.agents)))
         )
 
         rewards = {agent: team_reward for agent in self.agents}
@@ -315,18 +352,9 @@ class IndustrialEvacuationEnv(ParallelEnv):
                 "evacuated": evac_now,
                 "casualties": cas_now,
                 "sim_time": self.sim.t,
+                "safety_interventions": safety_interventions,
             }
             for agent in self.agents
         }
 
         return obs, rewards, terminations, truncations, infos
-
-    def _apply_policy_to_router(self, edge_penalties: Dict[Tuple[str, str], float]):
-        """Injects policy edge weights into the simulation navigation graph."""
-        self.sim.policy_multipliers = edge_penalties
-        if self.sim.policy_mode == "marl":
-            self.sim.router.update_weights(
-                self.sim.hazard.levels,
-                self.sim.hazard.blocked,
-                self.sim.policy_multipliers,
-            )
