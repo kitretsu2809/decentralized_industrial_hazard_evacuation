@@ -179,8 +179,8 @@ class IndustrialEvacuationEnv(ParallelEnv):
         opts = options or {}
         num_evac = opts.get("num_evacuees", self.num_evacuees)
         self.num_evacuees = num_evac
-        # Realistic egress duration ceiling (watchdog timeout: max 200s, ~80s for 30 peds)
-        self.max_sim_time = min(200.0, 75.0 + 0.35 * num_evac)
+        # Realistic egress duration ceiling (watchdog timeout: 105s base + crowd buffer, terminates early when done)
+        self.max_sim_time = min(220.0, 105.0 + 0.35 * num_evac)
         self.last_progress_finished = 0
         self.stagnation_timer = 0.0
         cluster_node = opts.get("cluster_node")
@@ -401,14 +401,15 @@ class IndustrialEvacuationEnv(ParallelEnv):
         total_finished = evac_now + cas_now
         is_terminated = (total_finished >= self.sim.num_evacuees)
 
-        # Stagnation early-stopping: if no progress for 25s while people remain in-transit
+        # Stagnation early-stopping: if no progress for 30s while people remain in-transit
+        # (grace window of 40s allows distant occupants to walk from upper floors/wings)
         if total_finished > self.last_progress_finished:
             self.last_progress_finished = total_finished
             self.stagnation_timer = 0.0
         elif in_transit > 0:
             self.stagnation_timer += self.DECISION_DT
 
-        is_stagnated = (self.stagnation_timer >= 25.0 and in_transit > 0)
+        is_stagnated = (self.sim.t >= 40.0 and self.stagnation_timer >= 30.0 and in_transit > 0)
         is_truncated = (self.sim.t >= self.max_sim_time) or is_stagnated
 
         # In-transit urgency penalty: gentle per-step nudging to evacuate quickly

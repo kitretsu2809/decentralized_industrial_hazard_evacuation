@@ -301,9 +301,16 @@ class Simulation:
                 else:
                     normal_corridors.append(nbr)
 
+            def _is_dead_end(node: str) -> bool:
+                return len(self.agent_neighbors.get(node, [])) <= 1 and node not in self.exits
+
             # 1. Prioritize designated green arrow corridors moving forward (away from prev_node)
-            forward_green = [nbr for nbr in green_corridors if nbr != prev_node]
-            chosen_green = forward_green if forward_green else green_corridors
+            forward_green = [nbr for nbr in green_corridors if nbr != prev_node and not _is_dead_end(nbr)]
+            if not forward_green:
+                forward_green = [nbr for nbr in green_corridors if nbr != prev_node]
+            chosen_green = forward_green if forward_green else [nbr for nbr in green_corridors if not _is_dead_end(nbr)]
+            if not chosen_green:
+                chosen_green = green_corridors
 
             if chosen_green:
                 for nbr in chosen_green:
@@ -326,9 +333,12 @@ class Simulation:
                             primary_occ += 1
 
                 # If primary is jammed (density >= 0.50 of capacity) and a safe forward alternative exists:
+                curr_dist = self.static_exit_dists.get(current_node, 50.0)
                 forward_alts = [
                     nbr for nbr in (normal_corridors + amber_corridors)
-                    if nbr != prev_node and nbr != primary and self.hazard.levels.get(nbr, 0.0) < 0.30
+                    if nbr != prev_node and nbr != primary and not _is_dead_end(nbr)
+                    and self.hazard.levels.get(nbr, 0.0) < 0.30
+                    and self.static_exit_dists.get(nbr, 50.0) <= curr_dist + 5.0
                 ]
                 if forward_alts and (primary_occ / float(primary_cap)) >= 0.50:
                     # Dynamically divert 50% of incoming arrivals to the uncongested parallel corridor
@@ -337,21 +347,42 @@ class Simulation:
 
                 return primary
 
-            # 2. If green arrow is absent, advance along forward open corridors
-            forward_open = [nbr for nbr in (normal_corridors + amber_corridors) if nbr != prev_node]
+            # 2. Dynamic green absent: NFPA 101 / OSHA standard static emergency exit signage fallback
+            # In standby mode, illuminated signboards display the default static exit corridor.
+            static_p = self._static_paths.get(current_node, [])
+            static_next = static_p[1] if len(static_p) >= 2 else None
+            open_corridors = normal_corridors + amber_corridors
+
+            if (
+                static_next
+                and static_next in open_corridors
+                and static_next != prev_node
+                and self.hazard.levels.get(static_next, 0.0) < 0.30
+            ):
+                return static_next
+
+            # 3. Static path blocked or hazardous: advance along best forward downhill corridor
+            forward_open = [nbr for nbr in open_corridors if nbr != prev_node and not _is_dead_end(nbr)]
             if forward_open:
                 for nbr in forward_open:
                     if nbr in self.exits:
                         return nbr
-                return forward_open[agent_id % len(forward_open)]
+                curr_dist = self.static_exit_dists.get(current_node, 50.0)
+                downhill = [
+                    nbr for nbr in forward_open
+                    if self.static_exit_dists.get(nbr, 50.0) <= curr_dist + 5.0
+                ]
+                if downhill:
+                    return downhill[agent_id % len(downhill)]
+                # If all downhill paths blocked by hazard, detour via shortest reachable corridor
+                return min(forward_open, key=lambda n: self.static_exit_dists.get(n, 999.0))
 
-            # 3. Only backtrack if at an absolute dead-end with zero forward unblocked corridors
-            all_open = green_corridors or normal_corridors or amber_corridors
-            if all_open:
-                for nbr in all_open:
+            # 4. Only backtrack if at an absolute dead-end with zero forward unblocked corridors
+            if open_corridors:
+                for nbr in open_corridors:
                     if nbr in self.exits:
                         return nbr
-                return all_open[agent_id % len(all_open)]
+                return min(open_corridors, key=lambda n: self.static_exit_dists.get(n, 999.0))
             return None
 
         # ── 2. STATIC NFPA MODE: Fixed geometric signs ───────────────────
