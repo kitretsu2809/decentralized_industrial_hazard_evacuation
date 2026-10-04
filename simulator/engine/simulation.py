@@ -186,9 +186,8 @@ class Simulation:
     def set_policy_mode(self, mode: str):
         if mode in ("dijkstra", "marl", "static"):
             self.policy_mode = mode
-            if mode == "marl" and self.policy_model is None:
-                self._init_policy()
             if mode == "marl":
+                self._init_policy()
                 self._externally_controlled_signboards = False
                 self._reset_policy_memory()
                 self._refresh_live_policy_actions(force=True)
@@ -298,16 +297,41 @@ class Simulation:
                 for nbr in forward_green:
                     if nbr in self.exits:
                         return nbr
-                return min(forward_green, key=lambda n: self.static_exit_dists.get(n, 999.0))
 
-            # 2. If green arrow is absent or erroneously points backward to prev_node,
-            # advance along forward corridors minimizing static distance to nearest exit
+                # Dynamic Flow Splitting:
+                # If multiple green corridors are designated, partition arriving evacuees proportionally
+                if len(forward_green) > 1:
+                    return forward_green[agent_id % len(forward_green)]
+
+                primary = forward_green[0]
+                # Check downstream bottleneck crowding at primary corridor
+                primary_cap = max(1, self.node_capacities.get(primary, 10))
+                primary_occ = 0
+                for p in self.agents:
+                    if p.state.value in ("moving", "reacting", "danger", "rerouting"):
+                        if p.current_node == primary or (p.path and p.path[0] == primary):
+                            primary_occ += 1
+
+                # If primary is jammed (density >= 0.50 of capacity) and a safe forward alternative exists:
+                forward_alts = [
+                    nbr for nbr in (normal_corridors + amber_corridors)
+                    if nbr != prev_node and nbr != primary and self.hazard.levels.get(nbr, 0.0) < 0.30
+                ]
+                if forward_alts and (primary_occ / float(primary_cap)) >= 0.50:
+                    # Dynamically divert 50% of incoming arrivals to the uncongested parallel corridor
+                    if agent_id % 2 == 1:
+                        return forward_alts[0]
+
+                return primary
+
+            # 2. If green arrow is absent or points backward to prev_node,
+            # advance along forward open corridors with flow splitting
             forward_open = [nbr for nbr in (normal_corridors + amber_corridors) if nbr != prev_node]
             if forward_open:
                 for nbr in forward_open:
                     if nbr in self.exits:
                         return nbr
-                return min(forward_open, key=lambda n: self.static_exit_dists.get(n, 999.0))
+                return forward_open[agent_id % len(forward_open)]
 
             # 3. Only backtrack if at an absolute dead-end with zero forward unblocked corridors
             all_open = green_corridors or normal_corridors or amber_corridors
@@ -315,7 +339,7 @@ class Simulation:
                 for nbr in all_open:
                     if nbr in self.exits:
                         return nbr
-                return min(all_open, key=lambda n: self.static_exit_dists.get(n, 999.0))
+                return all_open[agent_id % len(all_open)]
             return None
 
         # ── 2. STATIC NFPA MODE: Fixed geometric signs ───────────────────
@@ -336,7 +360,7 @@ class Simulation:
     def play(self):  self.running = True
     def pause(self): self.running = False
 
-    def reset(self, num_evacuees=None):
+    def reset(self, num_evacuees=None, cluster_node=None, cluster_ratio=0.0):
         if num_evacuees: self.num_evacuees = num_evacuees
         self.t = 0.0
         self._accumulator = 0.0
@@ -347,7 +371,7 @@ class Simulation:
         self.signboard_actions = {}
         self._externally_controlled_signboards = False
         self._reset_policy_memory()
-        self._init_agents()
+        self._init_agents(cluster_node=cluster_node, cluster_ratio=cluster_ratio)
         if self.policy_mode == "marl":
             self._refresh_live_policy_actions(force=True)
         self.running = True   # auto-resume on reset
@@ -568,9 +592,10 @@ class Simulation:
                         if agent.state == PedestrianState.REROUTING:
                             agent.state = PedestrianState.MOVING
 
-    def _init_agents(self):
+    def _init_agents(self, cluster_node=None, cluster_ratio=0.0):
         self.agents = spawn_pedestrians(
-            self.num_evacuees, self.node_positions, self.node_floors)
+            self.num_evacuees, self.node_positions, self.node_floors,
+            cluster_node=cluster_node, cluster_ratio=cluster_ratio)
         # Workers begin in NORMAL operating state dwelling at their stations (no exit paths initially)
         for agent in self.agents:
             agent.state = PedestrianState.NORMAL
@@ -686,12 +711,32 @@ class Simulation:
                         best_c_idx, _ = min(safe_nbrs, key=lambda pair: self.static_exit_dists.get(pair[1], 999.0))
                         arrow_idx = best_c_idx
 
+                arrow_indices = set()
+                if arrow_idx is not None:
+                    arrow_indices.add(arrow_idx)
+
+                # Density-aware secondary flow-splitting arrow:
+                # If primary corridor is crowded (density >= 40%), illuminate an alternative safe forward corridor
+                if arrow_idx is not None and len(nbrs) > 1:
+                    primary_nbr = nbrs[arrow_idx]
+                    p_occ = sum(1 for p in self.agents if p.current_node == primary_nbr and p.state.value in ("moving", "reacting", "danger", "rerouting"))
+                    p_cap = max(1, self.node_capacities.get(primary_nbr, 10))
+                    if (p_occ / float(p_cap)) >= 0.40:
+                        for c_idx, neighbour in enumerate(nbrs[:6]):
+                            if c_idx != arrow_idx:
+                                nbr_h = self.hazard.levels.get(neighbour, 0.0)
+                                is_dead_end = len(self.agent_neighbors.get(neighbour, [])) <= 1 and neighbour not in self.exits
+                                is_hoist = "hoist" in node_id and "hoist" in neighbour
+                                if loc_h < 0.80 and nbr_h < 0.30 and not is_dead_end and not is_hoist:
+                                    arrow_indices.add(c_idx)
+                                    break
+
                 for c_idx, neighbour in enumerate(nbrs[:6]):
                     nbr_h = self.hazard.levels.get(neighbour, 0.0)
                     is_hoist = "hoist" in node_id and "hoist" in neighbour
                     if loc_h >= 0.80 or nbr_h >= 0.80 or is_hoist:
                         phys_act[c_idx] = 2  # BLOCKED
-                    elif c_idx == arrow_idx:
+                    elif c_idx in arrow_indices:
                         phys_act[c_idx] = 3  # ARROW
                     elif nbr_h >= 0.30:
                         phys_act[c_idx] = 1  # CAUTION (moderate smoke/hazard)

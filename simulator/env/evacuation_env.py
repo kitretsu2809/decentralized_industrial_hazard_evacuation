@@ -94,7 +94,8 @@ class IndustrialEvacuationEnv(ParallelEnv):
             "cas": 200.0,      # High penalty on casualty incidence
             "progress": 15.0,  # Dense step reward for moving closer to exits
             "flip": 1.0,       # Penalty on gratuitous signboard changes
-            "cong": 0.5,       # Density variance penalty
+            "cong": 0.5,       # Spatial density variance penalty
+            "jam": 5.0,        # Doorway arching & local jamming density penalty
         }
 
         # Episode state tracking
@@ -140,7 +141,9 @@ class IndustrialEvacuationEnv(ParallelEnv):
         num_evac = opts.get("num_evacuees", self.num_evacuees)
         self.num_evacuees = num_evac
         self.max_sim_time = max(120.0, 90.0 + 0.15 * num_evac)
-        self.sim.reset(num_evacuees=num_evac)
+        cluster_node = opts.get("cluster_node")
+        cluster_ratio = float(opts.get("cluster_ratio", 0.0))
+        self.sim.reset(num_evacuees=num_evac, cluster_node=cluster_node, cluster_ratio=cluster_ratio)
         self.sim.set_policy_mode(opts.get("policy_mode", "marl"))
 
         # Inject disaster scenario
@@ -152,8 +155,8 @@ class IndustrialEvacuationEnv(ParallelEnv):
             if not target_node and self.random_disasters:
                 candidates = [
                     "tank_farm_a", "tank_farm_b", "reactor_1", "reactor_2",
-                    "hazmat_basin", "compressor_shed", "pipe_track_junc_1",
-                    "corridor_f2_lab", "corridor_f3_mech", "loading_bay"
+                    "hazmat_basin", "compressor_shed", "pipe_rack_junc_1",
+                    "corridor_perimeter_n", "corridor_perimeter_s", "loading_bay"
                 ]
                 target_node = random.choice(candidates)
                 hazard_type = random.choice(["GAS_RELEASE", "THERMAL_FIRE", "TOXIC_PLUME"])
@@ -254,11 +257,21 @@ class IndustrialEvacuationEnv(ParallelEnv):
         safety_interventions = 0
         safe_actions: Dict[str, np.ndarray] = {}
 
+        # Count active pedestrians per node before step logic to gauge crowd pressure
+        node_occupancies = {}
+        for p in self.sim.agents:
+            if p.state not in (PedestrianState.EVACUATED, PedestrianState.CASUALTY):
+                node_occupancies[p.current_node] = node_occupancies.get(p.current_node, 0) + 1
+
         for agent, act in actions.items():
             act_idx = int(np.asarray(act).item()) if isinstance(act, (np.ndarray, list)) else int(act)
             prev_act = self.prev_actions.get(agent, self.MAX_CORRIDORS)
             nbrs = self.agent_neighbors.get(agent, [])
             local_hazard = self.sim.hazard.levels.get(agent, 0.0)
+            cap = max(1, self.sim.node_capacities.get(agent, 10))
+            current_rho = min(2.0, node_occupancies.get(agent, 0) / float(cap))
+            delta_h = abs(local_hazard - self.last_hazards.get(agent, 0.0))
+            delta_rho = abs(current_rho - self.last_crowds.get(agent, 0.0))
 
             # Build physical 6-corridor action array for simulation engine:
             # 0: NORMAL, 1: CAUTION, 2: BLOCKED, 3: GREEN ARROW
@@ -277,8 +290,8 @@ class IndustrialEvacuationEnv(ParallelEnv):
                 else:
                     action_vec[k] = 0  # NORMAL (Open standby)
 
-            # Anti-flipping penalty: penalize changing arrows unless local hazard shifted
-            if act_idx != prev_act and abs(local_hazard - self.last_hazards.get(agent, 0.0)) < 0.15:
+            # Anti-flipping penalty: penalize changing arrows unless local hazard or crowd pressure shifted
+            if act_idx != prev_act and delta_h < 0.15 and delta_rho < 0.25:
                 flipping_penalty += 1.0
 
             safe_actions[agent] = action_vec
@@ -323,11 +336,18 @@ class IndustrialEvacuationEnv(ParallelEnv):
         self.last_evacuated = evac_now
         self.last_casualties = cas_now
 
-        # Corridor density balance variance penalty
-        active_counts = [
-            metrics["moving"], metrics["reacting"], metrics["in_danger"], metrics["rerouting"]
+        # Spatial density variance across nodes and doorway arching/jamming penalty
+        node_occupancies_post = {}
+        for p in self.sim.agents:
+            if p.state not in (PedestrianState.EVACUATED, PedestrianState.CASUALTY):
+                node_occupancies_post[p.current_node] = node_occupancies_post.get(p.current_node, 0) + 1
+        node_densities = [
+            node_occupancies_post.get(nid, 0) / float(max(1, self.sim.node_capacities.get(nid, 10)))
+            for nid in self.agents
         ]
-        cong_penalty = float(np.var(active_counts)) / (self.sim.num_evacuees ** 2 + 1e-6)
+        cong_penalty = float(np.var(node_densities)) if node_densities else 0.0
+        # Jamming penalty: penalizes local density spikes exceeding critical jamming threshold (rho >= 1.5)
+        jamming_penalty = float(np.mean([max(0.0, d - 1.5) ** 2 for d in node_densities])) if node_densities else 0.0
 
         # Scale-invariant normalization across crowd density N
         n_total = max(1, self.sim.num_evacuees)
@@ -340,6 +360,7 @@ class IndustrialEvacuationEnv(ParallelEnv):
             - self.weights["cas"] * prop_cas
             + self.weights.get("progress", 15.0) * r_progress
             - self.weights["cong"] * cong_penalty
+            - self.weights.get("jam", 5.0) * jamming_penalty
             - self.weights["flip"] * (flipping_penalty / max(1, len(self.agents)))
         )
 

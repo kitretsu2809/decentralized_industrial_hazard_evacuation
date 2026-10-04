@@ -204,7 +204,7 @@ class MAPPOTrainer:
             # Pedagogical scenario stages based on normalized progress tau in [0, 1]
             if tau < 0.25:
                 stage_name = "Stage 1: Primary Arterial Cut"
-                target_node = random.choice(["reactor_2", "pipe_rack_junc_1", "pump_house", "corridor_f2_lab"])
+                target_node = random.choice(["reactor_2", "pipe_rack_junc_1", "pump_house", "corridor_perimeter_n"])
                 hazard_type = random.choice(["FIRE", "GAS_RELEASE"])
             elif tau < 0.50:
                 stage_name = "Stage 2: Vertical Stairwell Flash"
@@ -212,12 +212,31 @@ class MAPPOTrainer:
                 hazard_type = random.choice(["FIRE", "GAS_RELEASE"])
             elif tau < 0.75:
                 stage_name = "Stage 3: Bottleneck Arching & Flow-Splitting"
-                target_node = random.choice(["loading_bay", "tank_farm_a", "tank_farm_b", "hazmat_basin"])
-                hazard_type = random.choice(["CHEMICAL_SPILL", "GAS_RELEASE"])
+                target_node = random.choice([
+                    "pipe_rack_junc_1", "corridor_perimeter_n", "reactor_2",
+                    "stair_north_f1", "stair_south_f1", "loading_bay",
+                    "tank_farm_a", "tank_farm_b", "hazmat_basin"
+                ])
+                hazard_type = random.choice(["CHEMICAL_SPILL", "GAS_RELEASE", "THERMAL_FIRE"])
             else:
                 stage_name = "Stage 4: Compound Disaster (Stress 600)"
-                target_node = random.choice(["reactor_1", "reactor_2", "tank_farm_a", "compressor_shed", "hazmat_basin"])
-                hazard_type = random.choice(["EXPLOSION", "CHEMICAL_SPILL", "FIRE"])
+                target_node = random.choice([
+                    "pipe_rack_junc_1", "corridor_perimeter_n", "reactor_1", "reactor_2",
+                    "stair_north_f1", "stair_south_f1", "tank_farm_a",
+                    "compressor_shed", "hazmat_basin"
+                ])
+                hazard_type = random.choice(["EXPLOSION", "CHEMICAL_SPILL", "FIRE", "TOXIC_PLUME"])
+
+            # High-density crowd cluster scenarios in Stage 3 & 4 at bottleneck nodes
+            cluster_node = None
+            cluster_ratio = 0.0
+            if tau >= 0.50 and random.random() < 0.75:
+                cluster_candidates = [
+                    "pipe_rack_junc_1", "corridor_perimeter_n", "reactor_2",
+                    "stair_north_f1", "stair_south_f1", "loading_bay"
+                ]
+                cluster_node = random.choice(cluster_candidates)
+                cluster_ratio = random.uniform(0.35, 0.60)
 
             # Smooth monotonic headcount ramp from min_evacuees to max_evacuees: N(tau) = N_min + (N_max - N_min) * tau^1.15
             n_base = self.min_evacuees + (self.max_evacuees - self.min_evacuees) * (tau ** 1.15)
@@ -237,7 +256,7 @@ class MAPPOTrainer:
             candidates = [
                 "tank_farm_a", "tank_farm_b", "reactor_1", "reactor_2",
                 "hazmat_basin", "compressor_shed", "pipe_rack_junc_1", "pipe_rack_junc_2",
-                "loading_bay", "pump_house", "corridor_f2_lab", "corridor_f3_mech",
+                "loading_bay", "pump_house", "corridor_perimeter_n", "corridor_perimeter_s",
                 "stair_north_f1", "stair_south_f1"
             ]
             target_node = random.choice(candidates)
@@ -245,13 +264,27 @@ class MAPPOTrainer:
             intensity = random.uniform(0.75, 0.98)
             dual_chance = 0.30
 
-        obs, infos = self.env.reset(options={
+            cluster_node = None
+            cluster_ratio = 0.0
+            if random.random() < 0.50:
+                cluster_node = random.choice([
+                    "pipe_rack_junc_1", "corridor_perimeter_n", "reactor_2",
+                    "stair_north_f1", "stair_south_f1", "loading_bay"
+                ])
+                cluster_ratio = random.uniform(0.30, 0.55)
+
+        reset_opts = {
             "num_evacuees": num_evac,
             "node_id": target_node,
             "hazard_type": hazard_type,
             "intensity": intensity,
             "inject": True,
-        })
+        }
+        if cluster_node:
+            reset_opts["cluster_node"] = cluster_node
+            reset_opts["cluster_ratio"] = cluster_ratio
+
+        obs, infos = self.env.reset(options=reset_opts)
 
         # Dual disaster injection
         dual_injected = False
@@ -472,6 +505,13 @@ class MAPPOTrainer:
                         self.policy.save_checkpoint(root_best, extra_meta=metrics)
                     except Exception:
                         pass
+                else:
+                    dir_best = os.path.join(self.save_dir, "directional", "best_policy.pt")
+                    try:
+                        os.makedirs(os.path.dirname(dir_best), exist_ok=True)
+                        self.policy.save_checkpoint(dir_best, extra_meta=metrics)
+                    except Exception:
+                        pass
 
             # Save latest checkpoint
             latest_path = os.path.join(self.save_dir, "st_tba_gat_latest.pt")
@@ -480,6 +520,13 @@ class MAPPOTrainer:
                 root_latest = os.path.join(os.path.dirname(self.save_dir), "st_tba_gat_latest.pt")
                 try:
                     self.policy.save_checkpoint(root_latest, extra_meta=metrics)
+                except Exception:
+                    pass
+            else:
+                dir_latest = os.path.join(self.save_dir, "directional", "st_tba_gat_latest.pt")
+                try:
+                    os.makedirs(os.path.dirname(dir_latest), exist_ok=True)
+                    self.policy.save_checkpoint(dir_latest, extra_meta=metrics)
                 except Exception:
                     pass
 

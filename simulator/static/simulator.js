@@ -3,7 +3,7 @@
  * Features: zoom/pan, time-based smooth interpolation, hazard glows, route arrows
  */
 
-const WS_URL = `ws://${location.host}/ws`;
+const WS_URL = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`;
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let building     = null;

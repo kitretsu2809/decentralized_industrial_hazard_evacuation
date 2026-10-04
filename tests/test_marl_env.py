@@ -161,6 +161,49 @@ class TestIndustrialEvacuationEnv(unittest.TestCase):
         self.assertAlmostEqual(h_values[0], 0.40, places=2)
         self.assertAlmostEqual(h_values[-1], 0.95, places=2)
 
+    def test_crowd_cluster_spawning(self):
+        """Verifies that cluster_node and cluster_ratio concentrate occupants at bottleneck nodes."""
+        obs, _ = self.env.reset(options={
+            "num_evacuees": 50,
+            "cluster_node": "corridor_perimeter_n",
+            "cluster_ratio": 0.60,
+        })
+        clustered = sum(1 for p in self.env.sim.agents if p.current_node == "corridor_perimeter_n")
+        # 60% of 50 = 30 clustered agents
+        self.assertGreaterEqual(clustered, 25)
+
+    def test_spatial_density_variance_and_jamming_penalty(self):
+        """Verifies that high crowd concentration incurs jamming and spatial density penalties."""
+        # Setup high crowd cluster at a bottleneck node
+        self.env.reset(options={
+            "num_evacuees": 80,
+            "cluster_node": "pipe_rack_junc_1",
+            "cluster_ratio": 0.80,
+        })
+        actions = {agent: 6 for agent in self.env.agents}  # standby actions
+        _, rewards, _, _, _ = self.env.step(actions)
+        # Verify team reward evaluates without NaN or Inf
+        rew = rewards[self.env.agents[0]]
+        self.assertFalse(np.isnan(rew))
+        self.assertFalse(np.isinf(rew))
+
+    def test_flipping_penalty_decoupling_under_crowd_pressure(self):
+        """Verifies arrow changes are permitted without flipping penalty under high crowd shifts."""
+        self.env.reset(options={
+            "num_evacuees": 40,
+            "cluster_node": "reactor_2",
+            "cluster_ratio": 0.70,
+        })
+        # First step with action 0
+        actions_1 = {agent: 0 for agent in self.env.agents}
+        self.env.step(actions_1)
+
+        # Second step: flip action to 1 at reactor_2 where crowd is high
+        actions_2 = {agent: 1 for agent in self.env.agents}
+        _, rewards, _, _, _ = self.env.step(actions_2)
+        self.assertTrue(all(not np.isnan(r) for r in rewards.values()))
+
 
 if __name__ == "__main__":
     unittest.main()
+

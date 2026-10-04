@@ -80,10 +80,13 @@ class Pedestrian:
 
 
 def spawn_pedestrians(n: int, node_positions: dict, node_floors: dict,
-                      exclude_types: set = None) -> List[Pedestrian]:
+                      exclude_types: set = None,
+                      cluster_node: Optional[str] = None,
+                      cluster_ratio: float = 0.0) -> List[Pedestrian]:
     """
     Spawn n pedestrians distributed realistically across all floors in the facility
     (excluding muster exits and stairwells).
+    Supports optional high-density crowd cluster placement around a specific node.
     """
     eligible = [
         nid for nid in node_positions
@@ -98,16 +101,28 @@ def spawn_pedestrians(n: int, node_positions: dict, node_floors: dict,
         ]
 
     agents = []
-    for i in range(n):
-        node = random.choice(eligible)
-        x, y = node_positions[node]
-        fl = node_floors.get(node, 1)
+    n_clustered = int(n * cluster_ratio) if (cluster_node and cluster_node in node_positions and cluster_ratio > 0.0) else 0
 
-        # Gentle scatter within workstation room (radius <= 1.2m)
-        r = random.uniform(0.2, 1.2)
-        ang = random.uniform(0, 2 * math.pi)
-        px = x + r * math.cos(ang)
-        py = y + r * math.sin(ang)
+    for i in range(n):
+        if i < n_clustered:
+            node = cluster_node
+            x, y = node_positions[node]
+            fl = node_floors.get(node, 1)
+            # Scatter within bottleneck room/corridor area (radius <= 3.5m)
+            r = random.uniform(0.3, 3.5)
+            ang = random.uniform(0, 2 * math.pi)
+            px = x + r * math.cos(ang)
+            py = y + r * math.sin(ang)
+        else:
+            node = random.choice(eligible)
+            x, y = node_positions[node]
+            fl = node_floors.get(node, 1)
+
+            # Gentle scatter within workstation room (radius <= 1.2m)
+            r = random.uniform(0.2, 1.2)
+            ang = random.uniform(0, 2 * math.pi)
+            px = x + r * math.cos(ang)
+            py = y + r * math.sin(ang)
 
         agents.append(Pedestrian(
             id=i, x=px, y=py,
