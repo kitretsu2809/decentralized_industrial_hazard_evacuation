@@ -185,19 +185,6 @@ Open your browser to:
 
 ---
 
-### 2. Zero-Cost Remote Showcase (Cloudflare Tunnel)
-
-To showcase the live simulation to remote stakeholders, clients, or test from mobile devices with zero server cost and zero firewall port-forwarding:
-
-```bash
-# In a separate terminal, launch a secure tunnel:
-cloudflared tunnel --url http://127.0.0.1:8080
-```
-
-Cloudflare generates a secure `https://<unique-subdomain>.trycloudflare.com` URL. The simulator frontend dynamically detects HTTPS and connects using secure WebSockets (`wss://`).
-
----
-
 ## Training
 
 ### MAPPO Curriculum & Bottleneck Crowd Clusters
