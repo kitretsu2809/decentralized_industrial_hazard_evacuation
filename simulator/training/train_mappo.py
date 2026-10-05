@@ -23,6 +23,7 @@ if str(_REPO_DIR) not in sys.path:
 
 from simulator.env.evacuation_env import IndustrialEvacuationEnv
 from simulator.policy.st_tba_gat import ST_TBA_GAT
+from simulator.engine.pedestrian import PedestrianState
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
