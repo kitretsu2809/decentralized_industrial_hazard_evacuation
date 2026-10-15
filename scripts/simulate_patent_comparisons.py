@@ -35,7 +35,8 @@ def run_network_scalability_simulation(incident_frequencies, num_trials=50):
     Compares:
     1. Standard Distributed GNN: 64-dim float32 embeddings = 256 bytes payload
        (requires 3 fragmented 802.15.4 packets of ~100 bytes each)
-    2. Claim 3 (Our Method): 4-byte sparse delta-bitmap PDU [Node ID, dH, dRho, Status]
+    2. Claim 3 (Our Method): 4-byte hazard PDU
+       [8-direction mask, hazard, crowd, type/version/TTL]
        (fits in a single 20-byte physical frame, event-triggered)
     """
     print("\n[EXPERIMENT A] Simulating Network Airtime & Latency across incident frequencies...")

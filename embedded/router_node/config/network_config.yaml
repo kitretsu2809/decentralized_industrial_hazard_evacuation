@@ -2,7 +2,7 @@
 network:
   protocol: "esp_now"  # or "thread"
   channel: 1
-  max_hops: 3
+  max_hops: 3  # encoded by the two-bit TTL field
   broadcast_interval_ms: 100
   heartbeat_interval_ms: 1000
   encryption:

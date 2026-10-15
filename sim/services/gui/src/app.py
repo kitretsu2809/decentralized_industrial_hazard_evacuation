@@ -314,18 +314,23 @@ class DockerTrainingWorker:
                         ag_idx = trainer.node_to_idx[ag]
                         ag_embed = embeddings[ag_idx].unsqueeze(0)
                         mask = torch.ones(1, trainer.max_actions, dtype=torch.bool, device=trainer.device)
+                        direction_slots = trainer.env.directional_neighbors[ag]
+                        valid_slots = [i for i, neighbor in enumerate(direction_slots) if neighbor is not None]
                         edge_logits, _, _ = trainer.policy.actor(ag_embed, mask)
                         edge_dist = torch.distributions.Categorical(logits=edge_logits)
                         sampled_edges = edge_dist.sample()
-                        step_log_p.append(edge_dist.log_prob(sampled_edges).sum())
+                        if valid_slots:
+                            step_log_p.append(edge_dist.log_prob(sampled_edges)[0, valid_slots].sum())
 
-                        num_edges = len(trainer.env.building_graph.get_neighbors(ag))
-                        edge_act = sampled_edges[0, :num_edges].tolist()
-                        for i, nbr in enumerate(trainer.env.building_graph.get_neighbors(ag)[:num_edges]):
+                        edge_act = [0] * trainer.max_actions
+                        for i, nbr in enumerate(direction_slots):
+                            if nbr is None:
+                                continue
+                            edge_act[i] = int(sampled_edges[0, i].item())
                             nbr_node = trainer.building.get_node(nbr)
                             if nbr_node and nbr_node.hazard_score > 0.35:
-                                edge_act[i] = 1
-                        full_act = edge_act + [0] * (len(trainer.env.action_spaces[ag].nvec) - num_edges)
+                                edge_act[i] = 2  # BLOCK the hazardous corridor
+                        full_act = edge_act + [0] * (len(trainer.env.action_spaces[ag].nvec) - trainer.max_actions)
                         actions[ag] = full_act
 
                     if step_log_p:

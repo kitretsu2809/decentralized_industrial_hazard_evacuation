@@ -11,7 +11,7 @@ class TestSpatioTemporalGATPolicy(unittest.TestCase):
     def setUp(self):
         self.node_feature_dim = 8
         self.embedding_dim = 64
-        self.max_actions = 6
+        self.max_actions = 8
         self.num_nodes = 10
         self.num_agents = 10
         

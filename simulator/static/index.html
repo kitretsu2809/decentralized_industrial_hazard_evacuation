@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#071018">
+  <title>Industrial Evacuation Safety Digital Twin</title>
+  <link rel="stylesheet" href="/static/style.css?v=3.0">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand" aria-label="Application identity">
+      <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+      <div class="brand-copy">
+        <div class="eyebrow">Industrial safety digital twin</div>
+        <div class="brand-title">Adaptive Evacuation Guidance</div>
+      </div>
+    </div>
+    <div class="header-status" aria-label="Live system status">
+      <div class="status-pill normal" id="facility-status">
+        <span class="status-dot"></span><span id="facility-status-text">NORMAL OPERATIONS</span>
+      </div>
+      <div class="status-pill policy-pill" id="policy-status">
+        <span class="pill-key">ROUTING</span><span id="policy-status-text">DYNAMIC DIJKSTRA</span>
+      </div>
+      <div class="status-pill iot-pill" id="iot-status">
+        <span class="status-dot"></span><span id="iot-status-text">CONTROLLERS —</span>
+      </div>
+    </div>
+    <div class="header-actions">
+      <div class="conn-badge" id="connection-badge">
+        <span class="conn-dot" id="conn-dot"></span><span id="conn-text">Connecting</span>
+      </div>
+      <button class="header-btn" id="btn-tour" onclick="window.startAutomatedTour()" title="Start guided demonstration">Guided demo</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <aside class="rail rail-left" aria-label="Incident controls">
+      <section class="rail-section command-section">
+        <div class="section-heading">
+          <div><span class="section-kicker">Incident command</span><h2 id="incident-phase">Monitoring</h2></div>
+          <span class="phase-code" id="phase-code">S0</span>
+        </div>
+        <p class="section-copy" id="incident-copy">Facility telemetry is nominal. Personnel remain at assigned stations.</p>
+        <div class="phase-track" aria-label="Emergency workflow">
+          <div class="phase-step active" data-phase="monitor"><span>1</span>Monitor</div>
+          <div class="phase-step" data-phase="alarm"><span>2</span>Alarm</div>
+          <div class="phase-step" data-phase="guide"><span>3</span>Guide</div>
+          <div class="phase-step" data-phase="muster"><span>4</span>Muster</div>
+        </div>
+        <button class="alarm-button" id="btn-alarm">
+          <span class="alarm-symbol" aria-hidden="true">!</span>
+          <span><strong>Declare evacuation</strong><small>Initiate facility-wide alarm</small></span>
+        </button>
+        <div class="button-grid three">
+          <button class="control-button primary" id="btn-play">Run</button>
+          <button class="control-button" id="btn-pause">Pause</button>
+          <button class="control-button" id="btn-reset">Reset exercise</button>
+        </div>
+        <div class="command-feedback" id="command-feedback" role="status" aria-live="polite"></div>
+      </section>
+
+      <section class="rail-section">
+        <div class="section-title-row"><h3>Exercise scenario</h3><span class="tag simulation-tag">SIMULATION</span></div>
+        <p class="field-note">Hazard injection is isolated to the digital twin and automatically raises the evacuation alarm.</p>
+        <label class="field-label" for="node-select">Origin zone</label>
+        <select id="node-select"><option>Loading facility topology…</option></select>
+        <div class="field-pair">
+          <div>
+            <label class="field-label" for="hazard-type">Hazard class</label>
+            <select id="hazard-type">
+              <option value="GAS_RELEASE">Gas release</option>
+              <option value="FIRE">Fire</option>
+              <option value="EXPLOSION">Explosion</option>
+              <option value="CHEMICAL_SPILL">Chemical spill</option>
+            </select>
+          </div>
+          <div>
+            <label class="field-label" for="intensity-slider">Severity <span id="intensity-val">0.75</span></label>
+            <input id="intensity-slider" type="range" min="0.3" max="1.0" step="0.05" value="0.75">
+          </div>
+        </div>
+        <button class="inject-button" id="btn-inject">Inject exercise hazard</button>
+        <div class="inject-ack" id="inject-ack" role="status" aria-live="polite"></div>
+        <p class="field-note compact">Select a room on the map to target it directly.</p>
+      </section>
+
+      <section class="rail-section perception-section">
+        <div class="section-title-row">
+          <h3>Node camera perception</h3>
+          <span class="tag" id="perception-status">CHECKING</span>
+        </div>
+        <p class="field-note">Attach a recorded CCTV feed to a node. Visual detections and virtual sensor history are fused before routing.</p>
+        <label class="field-label" for="camera-node-select">Camera node</label>
+        <select id="camera-node-select"><option>Loading camera nodes…</option></select>
+        <label class="video-drop" for="camera-video-input">
+          <input id="camera-video-input" type="file" accept="video/mp4,video/webm,video/quicktime,video/x-msvideo,video/x-matroska">
+          <span class="video-drop-title">Choose recorded feed</span>
+          <span id="camera-file-name">MP4, WebM, MOV, AVI or MKV · max 250 MB</span>
+        </label>
+        <button class="control-button perception-upload" id="btn-camera-upload">Assign feed and analyse</button>
+        <div class="inject-ack" id="camera-upload-ack" role="status" aria-live="polite"></div>
+        <div class="camera-preview-shell">
+          <video id="camera-preview" controls muted loop playsinline></video>
+          <canvas id="camera-detection-overlay" aria-hidden="true"></canvas>
+          <div class="camera-overlay">
+            <span class="live-pulse"></span><span id="camera-feed-label">NO FEED ASSIGNED</span>
+          </div>
+        </div>
+        <div class="perception-models" aria-label="Perception backend status">
+          <div><span>Visual branch</span><strong id="vision-backend">Checking…</strong></div>
+          <div><span>Temporal branch</span><strong id="sensor-backend">Checking…</strong></div>
+        </div>
+        <div class="hazard-vector" aria-label="Fused node hazard vector">
+          <div><span>Hazard</span><strong id="vector-hazard">0.00</strong></div>
+          <div><span>Crowd ρ</span><strong id="vector-crowd">0.00</strong></div>
+          <div><span>Vision conf.</span><strong id="vector-confidence">0.00</strong></div>
+          <div><span>Sensor anomaly</span><strong id="vector-sensor">0.00</strong></div>
+        </div>
+        <div class="packet-readout" aria-label="Four-byte neighbour communication packet">
+          <div><span>32-bit payload</span><strong id="packet-hex">--------</strong></div>
+          <div><span>Safe directions</span><strong id="packet-directions">—</strong></div>
+          <code id="packet-bits">00000000000000000000000000000000</code>
+        </div>
+        <p class="field-note compact" id="perception-detail">Waiting for a node feed.</p>
+      </section>
+
+      <section class="rail-section compact-section">
+        <h3>Simulation parameters</h3>
+        <div class="control-row">
+          <label for="speed-slider">Time scale</label>
+          <input id="speed-slider" type="range" min="0.5" max="8" step="0.5" value="2">
+          <output id="speed-val">2.0×</output>
+        </div>
+        <div class="control-row">
+          <label for="evacuee-count">Personnel</label>
+          <input id="evacuee-count" type="number" min="5" max="400" value="60">
+          <span class="muted">next reset</span>
+        </div>
+      </section>
+
+      <div class="rail-disclaimer">
+        <span class="disclaimer-mark">i</span>
+        Decision-support demonstrator. Field deployment requires site validation, certified alarm integration, and human incident command.
+      </div>
+    </aside>
+
+    <section class="twin-stage" aria-label="Facility evacuation digital twin">
+      <div class="stage-toolbar">
+        <div>
+          <span class="section-kicker">Live facility view</span>
+          <div class="stage-title"><span id="facility-name">Petrochemical facility</span><span class="title-separator">/</span><span id="floor-context">Floor 1</span></div>
+        </div>
+        <div class="stage-controls">
+          <div class="floor-tabs" id="floor-tabs" aria-label="Select facility floor"></div>
+          <button class="map-button" id="btn-fit" title="Fit floorplan to view">Fit view</button>
+        </div>
+      </div>
+      <div class="canvas-wrap">
+        <canvas id="sim-canvas" aria-label="Real-time facility floorplan"></canvas>
+        <div class="map-readout top-left">
+          <span class="readout-label">Exercise clock</span><strong id="m-time">00:00</strong>
+          <span class="divider"></span><span class="readout-label">Engine</span><strong id="run-state">RUNNING</strong>
+        </div>
+        <div class="map-readout top-right">
+          <span class="live-pulse"></span><span>TELEMETRY</span><strong id="last-update">WAITING</strong>
+        </div>
+        <div class="zoom-hint">Scroll to zoom · Drag to pan · Double-click to fit</div>
+        <div class="tooltip" id="tooltip" role="tooltip">
+          <div class="tooltip-title" id="tt-name">—</div>
+          <div class="tooltip-row" id="tt-row-type"><span>Asset type</span><span id="tt-type">—</span></div>
+          <div class="tooltip-row" id="tt-row-floor"><span>Level</span><span id="tt-floor">—</span></div>
+          <div class="tooltip-row" id="tt-row-controller" hidden><span>Controller</span><span id="tt-controller">—</span></div>
+          <div class="tooltip-row" id="tt-row-target" hidden><span>Directed link</span><span id="tt-target">—</span></div>
+          <div class="tooltip-row" id="tt-row-hazard"><span>Hazard index</span><span id="tt-hazard">Safe</span></div>
+          <div class="tooltip-row" id="tt-row-occupancy"><span>Occupancy</span><span id="tt-occupancy">—</span></div>
+          <div class="tooltip-row" id="tt-row-sign"><span>Guidance state</span><span id="tt-sign">—</span></div>
+        </div>
+        <div class="map-legend" aria-label="Map legend">
+          <div class="legend-group">
+            <span class="legend-label">Personnel</span>
+            <span><i class="legend-dot station"></i>Stationed</span>
+            <span><i class="legend-dot reacting"></i>Reacting</span>
+            <span><i class="legend-dot evacuating"></i>Evacuating</span>
+            <span><i class="legend-dot danger"></i>Danger</span>
+          </div>
+          <div class="legend-group">
+            <span class="legend-label">Sign command</span>
+            <span><i class="legend-sign safe">›</i>Proceed</span>
+            <span><i class="legend-sign caution">▲</i>Caution</span>
+            <span><i class="legend-sign blocked">×</i>Blocked</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="rail rail-right" aria-label="Operational metrics">
+      <section class="rail-section kpi-section">
+        <div class="section-title-row"><h3>Life-safety status</h3><span class="tag" id="accountability-tag">LIVE</span></div>
+        <div class="hero-kpi">
+          <div><span>Accounted safe</span><strong id="m-accounted">0%</strong></div>
+          <div class="progress-ring" id="accountability-ring" style="--progress:0"><span id="m-evacuated">0</span></div>
+        </div>
+        <div class="progress-track"><span id="progress-accounted"></span></div>
+        <div class="metric-grid">
+          <div class="metric-card"><span>Total personnel</span><strong id="m-total">—</strong></div>
+          <div class="metric-card warning"><span>At risk</span><strong id="m-danger">—</strong></div>
+          <div class="metric-card critical"><span>Casualties</span><strong id="m-casualties">—</strong></div>
+          <div class="metric-card"><span>Active hazard zones</span><strong id="m-hazard-count">0</strong></div>
+        </div>
+      </section>
+
+      <section class="rail-section">
+        <h3>Population movement</h3>
+        <div class="population-row"><span><i class="state-swatch normal"></i>At station</span><strong id="m-normal">—</strong></div>
+        <div class="population-bar"><span id="bar-normal"></span></div>
+        <div class="population-row"><span><i class="state-swatch reacting"></i>Reacting</span><strong id="m-reacting">—</strong></div>
+        <div class="population-bar"><span id="bar-reacting"></span></div>
+        <div class="population-row"><span><i class="state-swatch moving"></i>Evacuating / rerouting</span><strong id="m-moving">—</strong></div>
+        <div class="population-bar"><span id="bar-moving"></span></div>
+        <div class="population-row"><span><i class="state-swatch safe"></i>At muster point</span><strong id="m-evacuated-secondary">—</strong></div>
+        <div class="population-bar"><span id="bar-evacuated"></span></div>
+      </section>
+
+      <section class="rail-section policy-section">
+        <div class="section-title-row"><h3>Guidance controller</h3><span class="tag" id="policy-assurance">CHECKING</span></div>
+        <label class="field-label" for="sign-policy-select">Operational routing mode</label>
+        <select id="sign-policy-select">
+          <option value="dijkstra" selected>Dynamic safe-path baseline</option>
+          <option value="marl">ST-TBA-GAT adaptive guidance</option>
+          <option value="static">Static code-compliant signage</option>
+        </select>
+        <p class="policy-description" id="policy-description">Centralized hazard-aware shortest-path routing provides the operational baseline.</p>
+        <dl class="assurance-list">
+          <div><dt>Model source</dt><dd id="policy-source">Waiting for telemetry</dd></div>
+          <div><dt>Sign controllers</dt><dd id="controller-count">—</dd></div>
+          <div><dt>Directed route channels</dt><dd id="sign-count">—</dd></div>
+          <div><dt>Safety interlock</dt><dd class="good">Hazard block enforced</dd></div>
+        </dl>
+      </section>
+
+      <section class="rail-section incident-section">
+        <div class="section-title-row"><h3>Active incidents</h3><span class="count-badge" id="incident-count">0</span></div>
+        <div class="incident-list" id="active-incidents"><div class="empty-state">No active hazard zones</div></div>
+      </section>
+      <section class="rail-section event-section">
+        <h3>Operator event log</h3>
+        <ol class="event-log" id="event-log"><li><time>00:00</time><span>Console initialized</span></li></ol>
+      </section>
+    </aside>
+  </main>
+
+  <script src="/static/simulator.js?v=3.0"></script>
+  <script src="/static/tour_controller.js?v=3.0"></script>
+</body>
+</html>
