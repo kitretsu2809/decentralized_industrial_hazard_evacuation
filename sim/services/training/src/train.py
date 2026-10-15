@@ -137,23 +137,28 @@ class MAPPOTrainer:
                     ag_idx = self.node_to_idx[ag]
                     ag_embed = embeddings[ag_idx].unsqueeze(0)
                     mask = torch.ones(1, self.max_actions, dtype=torch.bool, device=self.device)
+                    direction_slots = self.env.directional_neighbors[ag]
+                    valid_slots = [i for i, neighbor in enumerate(direction_slots) if neighbor is not None]
                     
                     edge_logits, door_logits, vert_logits = self.policy.actor(ag_embed, mask)
                     edge_dist = torch.distributions.Categorical(logits=edge_logits)
                     sampled_edges = edge_dist.sample() # (1, max_actions)
                     
-                    step_log_p.append(edge_dist.log_prob(sampled_edges).sum())
-                    
-                    num_edges = len(self.env.building_graph.get_neighbors(ag))
-                    edge_act = sampled_edges[0, :num_edges].tolist()
+                    if valid_slots:
+                        step_log_p.append(edge_dist.log_prob(sampled_edges)[0, valid_slots].sum())
+
+                    edge_act = [0] * self.max_actions
                     
                     # Deterministic life-safety reflexive override
-                    for i, nbr in enumerate(self.env.building_graph.get_neighbors(ag)[:num_edges]):
+                    for i, nbr in enumerate(direction_slots):
+                        if nbr is None:
+                            continue
+                        edge_act[i] = int(sampled_edges[0, i].item())
                         nbr_node = self.building.get_node(nbr)
                         if nbr_node and nbr_node.hazard_score > 0.35:
-                            edge_act[i] = 1 # Force REDIRECT away from hazard
-                            
-                    full_act = edge_act + [0] * (len(self.env.action_spaces[ag].nvec) - num_edges)
+                            edge_act[i] = 2  # BLOCK the hazardous corridor
+
+                    full_act = edge_act + [0] * (len(self.env.action_spaces[ag].nvec) - self.max_actions)
                     actions[ag] = full_act
                     
                 if step_log_p:
@@ -273,19 +278,24 @@ class MAPPOTrainer:
                         ag_embed = embeddings[ag_idx].unsqueeze(0)
                         mask = torch.ones(1, self.max_actions, dtype=torch.bool, device=self.device)
                         edge_logits, _, _ = self.policy.actor(ag_embed, mask)
-                        
-                        num_edges = len(self.env.building_graph.get_neighbors(ag))
-                        choice = torch.argmax(edge_logits[0, :num_edges, 1]).item() # Best redirect
-                        edge_act = [0] * num_edges
-                        edge_act[choice] = 1
+
+                        direction_slots = self.env.directional_neighbors[ag]
+                        valid_slots = [i for i, neighbor in enumerate(direction_slots) if neighbor is not None]
+                        edge_act = [0] * self.max_actions
+                        if valid_slots:
+                            redirect_logits = edge_logits[0, valid_slots, 1]
+                            choice = valid_slots[int(torch.argmax(redirect_logits).item())]
+                            edge_act[choice] = 1
                         
                         # Life-safety override
-                        for i, nbr in enumerate(self.env.building_graph.get_neighbors(ag)[:num_edges]):
+                        for i, nbr in enumerate(direction_slots):
+                            if nbr is None:
+                                continue
                             nbr_node = self.building.get_node(nbr)
                             if nbr_node and nbr_node.hazard_score > 0.35:
-                                edge_act[i] = 1
-                                
-                        actions[ag] = edge_act + [0] * (len(self.env.action_spaces[ag].nvec) - num_edges)
+                                edge_act[i] = 2  # BLOCK the hazardous corridor
+
+                        actions[ag] = edge_act + [0] * (len(self.env.action_spaces[ag].nvec) - self.max_actions)
                 obs, _, _, _, _ = self.env.step(actions)
             st_evac.append(self.env.evacuated)
             st_cas.append(self.env.casualties)
@@ -354,4 +364,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

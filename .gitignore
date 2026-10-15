@@ -46,6 +46,8 @@ checkpoints/*.pt
 checkpoints/*.onnx
 data/models/*.onnx
 data/models/*.pt
+data/models/*.metrics.json
+data/sensor_cnn_synthetic.*
 
 # ─── Training Artifacts / W&B ─────────────────────────────────────────────────
 wandb/

@@ -173,18 +173,23 @@ class AITrainingWorker:
                         ag_idx = trainer.node_to_idx[ag]
                         ag_embed = embeddings[ag_idx].unsqueeze(0)
                         mask = torch.ones(1, trainer.max_actions, dtype=torch.bool, device=trainer.device)
+                        direction_slots = trainer.env.directional_neighbors[ag]
+                        valid_slots = [i for i, neighbor in enumerate(direction_slots) if neighbor is not None]
                         edge_logits, _, _ = trainer.policy.actor(ag_embed, mask)
                         edge_dist = torch.distributions.Categorical(logits=edge_logits)
                         sampled_edges = edge_dist.sample()
-                        step_log_p.append(edge_dist.log_prob(sampled_edges).sum())
-                        
-                        num_edges = len(trainer.env.building_graph.get_neighbors(ag))
-                        edge_act = sampled_edges[0, :num_edges].tolist()
-                        for i, nbr in enumerate(trainer.env.building_graph.get_neighbors(ag)[:num_edges]):
+                        if valid_slots:
+                            step_log_p.append(edge_dist.log_prob(sampled_edges)[0, valid_slots].sum())
+
+                        edge_act = [0] * trainer.max_actions
+                        for i, nbr in enumerate(direction_slots):
+                            if nbr is None:
+                                continue
+                            edge_act[i] = int(sampled_edges[0, i].item())
                             nbr_node = trainer.building.get_node(nbr)
                             if nbr_node and nbr_node.hazard_score > 0.35:
-                                edge_act[i] = 1
-                        full_act = edge_act + [0] * (len(trainer.env.action_spaces[ag].nvec) - num_edges)
+                                edge_act[i] = 2  # BLOCK the hazardous corridor
+                        full_act = edge_act + [0] * (len(trainer.env.action_spaces[ag].nvec) - trainer.max_actions)
                         actions[ag] = full_act
                         
                     if step_log_p:
@@ -505,12 +510,13 @@ class StandaloneSimulationEngine:
             self.ai_model.eval()
         logger.info("Hot-loaded latest trained weights into live simulation engine.")
 
-    def _extract_ai_features(self) -> torch.Tensor:
+    def _extract_ai_features(self, env: Optional[EvacuationEnv] = None) -> torch.Tensor:
+        env = env or self.env
         features = np.zeros((self.num_nodes, 8), dtype=np.float32)
-        for nid, node in self.building.all_nodes.items():
+        for nid, node in env.building.all_nodes.items():
             idx = self.node_to_idx[nid]
             cap = max(1, node.capacity)
-            pop = self.env.evacuees_at_node.get(nid, 0)
+            pop = env.evacuees_at_node.get(nid, 0)
             is_stair = 1.0 if node.type == NodeType.STAIRWELL else 0.0
             is_exit = 1.0 if node.type == NodeType.EXIT else 0.0
             
@@ -520,7 +526,7 @@ class StandaloneSimulationEngine:
             features[idx, 3] = is_stair
             features[idx, 4] = is_exit
             features[idx, 5] = min(1.0, cap / 50.0)
-            features[idx, 6] = max(0.0, 1.0 - (self.env.current_step / self.env.max_steps))
+            features[idx, 6] = max(0.0, 1.0 - (env.current_step / env.max_steps))
             features[idx, 7] = 1.0 if pop > 0 else 0.0
         return torch.tensor(features, dtype=torch.float32, device=self.device)
 
@@ -584,22 +590,23 @@ class StandaloneSimulationEngine:
                     ag_idx = self.node_to_idx[agent]
                     ag_embed = embeddings[ag_idx].unsqueeze(0)
                     mask = torch.ones(1, self.max_actions, dtype=torch.bool, device=self.device)
+                    direction_slots = self.env.directional_neighbors[agent]
+                    valid_slots = [i for i, neighbor in enumerate(direction_slots) if neighbor is not None]
                     edge_logits, _, _ = self.ai_model.actor(ag_embed, mask)
                     edge_dist = torch.distributions.Categorical(logits=edge_logits)
                     sampled_edges = edge_dist.sample()
-                    step_log_p.append(edge_dist.log_prob(sampled_edges).sum())
+                    if valid_slots:
+                        step_log_p.append(edge_dist.log_prob(sampled_edges)[0, valid_slots].sum())
                     
                     action_len = len(self.env.action_spaces[agent].nvec)
-                    num_nbrs = len(self.building_graph.get_neighbors(agent))
-                    
                     arr = [0] * action_len
-                    if num_nbrs > 0:
-                        edge_act = sampled_edges[0, :num_nbrs].tolist()
-                        for i, nbr in enumerate(self.building_graph.get_neighbors(agent)[:num_nbrs]):
-                            nbr_node = self.building.get_node(nbr)
-                            if nbr_node and nbr_node.hazard_score > 0.35:
-                                edge_act[i] = 1
-                        arr[:num_nbrs] = edge_act
+                    for i, nbr in enumerate(direction_slots):
+                        if nbr is None:
+                            continue
+                        arr[i] = int(sampled_edges[0, i].item())
+                        nbr_node = self.building.get_node(nbr)
+                        if nbr_node and nbr_node.hazard_score > 0.35:
+                            arr[i] = 2  # BLOCK the hazardous corridor
                     actions[agent] = arr
                     
                     probs = torch.softmax(edge_logits, dim=-1)
@@ -625,24 +632,26 @@ class StandaloneSimulationEngine:
                         ag_idx = self.node_to_idx[agent]
                         ag_embed = embeddings[ag_idx].unsqueeze(0)
                         mask = torch.ones(1, self.max_actions, dtype=torch.bool, device=self.device)
+                        direction_slots = self.env.directional_neighbors[agent]
+                        valid_slots = [i for i, neighbor in enumerate(direction_slots) if neighbor is not None]
                         edge_logits, _, _ = self.ai_model.actor(ag_embed, mask)
                         probs = torch.softmax(edge_logits, dim=-1)
                         confidences.append(float(torch.max(probs).item()))
                         
                         action_len = len(self.env.action_spaces[agent].nvec)
-                        num_nbrs = len(self.building_graph.get_neighbors(agent))
-                        
                         arr = [0] * action_len
-                        if num_nbrs > 0:
-                            redirect_probs = probs[0, :num_nbrs, 1] if probs.shape[-1] > 1 else probs[0, :num_nbrs]
-                            sampled = int(torch.argmax(redirect_probs).item())
-                            arr[min(sampled, action_len - 1)] = 1
+                        if valid_slots:
+                            redirect_probs = probs[0, valid_slots, 1]
+                            sampled = valid_slots[int(torch.argmax(redirect_probs).item())]
+                            arr[sampled] = 1
                             
                         # Deterministic life-safety override away from hazards
-                        for i, nbr in enumerate(self.building_graph.get_neighbors(agent)[:num_nbrs]):
+                        for i, nbr in enumerate(direction_slots):
+                            if nbr is None:
+                                continue
                             nbr_node = self.building.get_node(nbr)
                             if nbr_node and nbr_node.hazard_score > 0.35:
-                                arr[min(i, action_len - 1)] = 1
+                                arr[i] = 2  # BLOCK the hazardous corridor
                                 
                         actions[agent] = arr
                     self.inference_latency_ms = max(0.1, (time.time() - t0) * 1000.0)
@@ -656,14 +665,11 @@ class StandaloneSimulationEngine:
                 action_len = len(self.env.action_spaces[agent].nvec)
                 arr = [0] * action_len
                 if node:
-                    nbrs = self.building_graph.get_neighbors(agent)
+                    direction_slots = self.env.directional_neighbors[agent]
+                    nbrs = [neighbor for neighbor in direction_slots if neighbor is not None]
                     if nbrs:
                         best_nbr = min(nbrs, key=lambda n: self.building.get_node(n).hazard_score if self.building.get_node(n) else 1.0)
-                        adj_edges = list(self.building_graph.adj.get(agent, {}).values())
-                        for idx, edge in enumerate(adj_edges):
-                            if edge.target == best_nbr or edge.source == best_nbr:
-                                arr[min(idx, action_len - 1)] = 1
-                                break
+                        arr[direction_slots.index(best_nbr)] = 1
                 actions[agent] = arr
             self.inference_latency_ms = max(0.05, (time.time() - t0) * 1000.0)
 
@@ -812,19 +818,20 @@ class StandaloneSimulationEngine:
             st = 0
             while test_env.agents and st < 200:
                 st += 1
-                feats = self._extract_ai_features()
+                feats = self._extract_ai_features(test_env)
                 with torch.no_grad():
                     emb, h = self.ai_model.forward_encoder(feats, self.edge_index, h)
                     acts = {}
                     for ag in test_env.agents:
                         idx = self.node_to_idx[ag]
                         logits, _, _ = self.ai_model.actor(emb[idx].unsqueeze(0), torch.ones(1, self.max_actions, dtype=torch.bool, device=self.device))
-                        num_nbrs = len(test_env.building_graph.get_neighbors(ag))
+                        direction_slots = test_env.directional_neighbors[ag]
+                        valid_slots = [i for i, neighbor in enumerate(direction_slots) if neighbor is not None]
                         arr = [0] * len(test_env.action_spaces[ag].nvec)
-                        if num_nbrs > 0:
-                            redirect_probs = torch.softmax(logits, dim=-1)[0, :num_nbrs, 1] if logits.shape[-1] > 1 else logits[0, :num_nbrs]
-                            s = int(torch.argmax(redirect_probs).item())
-                            arr[min(s, len(arr) - 1)] = 1
+                        if valid_slots:
+                            redirect_probs = torch.softmax(logits, dim=-1)[0, valid_slots, 1]
+                            selected_slot = valid_slots[int(torch.argmax(redirect_probs).item())]
+                            arr[selected_slot] = 1
                         acts[ag] = arr
                 test_env.step(acts)
             ai_survivals.append((test_env.evacuated / max(1, test_env.total_evacuees)) * 100.0)
@@ -839,16 +846,13 @@ class StandaloneSimulationEngine:
                 st += 1
                 acts = {}
                 for ag in test_env.agents:
-                    nbrs = test_env.building_graph.get_neighbors(ag)
+                    direction_slots = test_env.directional_neighbors[ag]
+                    nbrs = [neighbor for neighbor in direction_slots if neighbor is not None]
                     action_len = len(test_env.action_spaces[ag].nvec)
                     arr = [0] * action_len
                     if nbrs:
                         best = min(nbrs, key=lambda n: test_env.building.get_node(n).hazard_score if test_env.building.get_node(n) else 1.0)
-                        adj = list(test_env.building_graph.adj.get(ag, {}).values())
-                        for idx, e in enumerate(adj):
-                            if e.target == best or e.source == best:
-                                arr[min(idx, action_len - 1)] = 1
-                                break
+                        arr[direction_slots.index(best)] = 1
                     acts[ag] = arr
                 test_env.step(acts)
             base_survivals.append((test_env.evacuated / max(1, test_env.total_evacuees)) * 100.0)

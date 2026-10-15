@@ -41,12 +41,14 @@ class RolloutBuffer:
     def clear(self):
         self.node_features: List[np.ndarray] = []  # (N, D)
         self.hidden_states: List[np.ndarray] = []  # (N, H)
-        self.actions: List[np.ndarray] = []        # (N, K)
+        self.actions: List[np.ndarray] = []        # (N,)
         self.action_log_probs: List[np.ndarray] = []  # (N,)
         self.action_masks: List[np.ndarray] = []   # (N, K+1)
         self.rewards: List[float] = []             # scalar
         self.values: List[float] = []              # scalar
-        self.dones: List[bool] = []                # scalar
+        # True only for an MDP terminal state. Time-limit/stagnation truncations
+        # must bootstrap from the critic instead of being treated as terminal.
+        self.terminals: List[bool] = []            # scalar
 
     def add(
         self,
@@ -57,7 +59,7 @@ class RolloutBuffer:
         action_masks: np.ndarray,
         reward: float,
         value: float,
-        done: bool,
+        terminated: bool,
     ):
         self.node_features.append(node_features)
         self.hidden_states.append(hidden_states)
@@ -66,7 +68,7 @@ class RolloutBuffer:
         self.action_masks.append(action_masks)
         self.rewards.append(reward)
         self.values.append(value)
-        self.dones.append(done)
+        self.terminals.append(terminated)
 
     def compute_returns_and_advantages(
         self,
@@ -81,7 +83,7 @@ class RolloutBuffer:
 
         for t in reversed(range(T)):
             next_val = last_value if t == T - 1 else self.values[t + 1]
-            non_terminal = 0.0 if self.dones[t] else 1.0
+            non_terminal = 0.0 if self.terminals[t] else 1.0
             delta = self.rewards[t] + gamma * next_val * non_terminal - self.values[t]
             last_gae = delta + gamma * gae_lambda * non_terminal * last_gae
             advantages[t] = last_gae
@@ -109,6 +111,7 @@ class MAPPOTrainer:
         value_coef: float = 0.5,
         entropy_coef: float = 0.01,
         ppo_epochs: int = 4,
+        ppo_batch_size: int = 16,
         device: Optional[str] = None,
         save_dir: str = "checkpoints",
         min_evacuees: int = 20,
@@ -132,6 +135,7 @@ class MAPPOTrainer:
         self.value_coef = value_coef
         self.entropy_coef = entropy_coef
         self.ppo_epochs = ppo_epochs
+        self.ppo_batch_size = max(1, ppo_batch_size)
         self.save_dir = save_dir
 
         self.num_agents = len(self.env.agents)
@@ -149,17 +153,17 @@ class MAPPOTrainer:
         ).to(self.device)
         self.start_episode = 1
         self.resume_checkpoint = resume_checkpoint
+        self.resume_metrics: Dict[str, Any] = {}
+        self.optimizer = optim.Adam(self.policy.parameters(), lr=self.lr, eps=1e-5)
         if resume_checkpoint:
             self._resume_policy(resume_checkpoint)
 
-        self.optimizer = optim.Adam(self.policy.parameters(), lr=self.lr, eps=1e-5)
+        # PPO requires the rollout and update likelihoods to describe the same
+        # policy. Gradients still work in eval mode, while GAT dropout is disabled.
+        self.policy.eval()
         self.edge_index = torch.tensor(
             self.env.edge_index, dtype=torch.long, device=self.device
         )
-        self.action_masks = torch.tensor(
-            self.env.get_all_action_masks(), dtype=torch.bool, device=self.device
-        )
-
         self.buffer = RolloutBuffer(
             self.num_agents, self.obs_dim, self.max_corridors, self.hidden_dim
         )
@@ -167,30 +171,36 @@ class MAPPOTrainer:
     def _resume_policy(self, checkpoint_path: str):
         """Restores a compatible policy and continues after its saved episode.
 
-        Policy checkpoints intentionally remain portable for simulator inference, so
-        this resumes model parameters and curriculum position rather than optimizer
-        moments.  That is preferable to silently restarting from random weights after
-        an interrupted training job.
+        The inference checkpoint remains portable, while optional optimizer state
+        allows a training job to continue without silently discarding Adam moments.
+        Incompatible checkpoints fail loudly instead of restarting from random
+        weights at a late curriculum stage.
         """
         if not os.path.exists(checkpoint_path):
             raise FileNotFoundError(f"Resume checkpoint does not exist: {checkpoint_path}")
 
         payload = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
-        try:
-            restored = ST_TBA_GAT.load_checkpoint(checkpoint_path, device=str(self.device))
-            if restored.node_dim != self.obs_dim or restored.max_corridors != self.max_corridors:
-                raise ValueError("dimension mismatch")
-            self.policy = restored
-        except Exception:
-            logger.info("Initializing new policy architecture with node_dim=%d, max_corridors=%d", self.obs_dim, self.max_corridors)
-            self.policy = ST_TBA_GAT(
-                node_dim=self.obs_dim,
-                hidden_dim=self.hidden_dim,
-                max_corridors=self.max_corridors,
-                gat_heads=4,
-                gat_layers=2,
-            ).to(self.device)
-        previous_episode = int(payload.get("extra_meta", {}).get("episode", 0))
+        checkpoint_obs_dim = int(payload.get("node_dim", self.obs_dim))
+        checkpoint_corridors = int(payload.get("max_corridors", self.max_corridors))
+        if checkpoint_obs_dim != self.obs_dim or checkpoint_corridors != self.max_corridors:
+            raise ValueError(
+                "Resume checkpoint is incompatible with this environment: "
+                f"checkpoint node_dim={checkpoint_obs_dim}, max_corridors={checkpoint_corridors}; "
+                f"environment node_dim={self.obs_dim}, max_corridors={self.max_corridors}."
+            )
+
+        self.policy.load_state_dict(payload["model_state_dict"], strict=True)
+        optimizer_state = payload.get("optimizer_state_dict")
+        if optimizer_state:
+            self.optimizer.load_state_dict(optimizer_state)
+        else:
+            logger.warning(
+                "Checkpoint %s has no optimizer state; model weights were restored, "
+                "but Adam moments start fresh.",
+                checkpoint_path,
+            )
+        self.resume_metrics = dict(payload.get("extra_meta", {}))
+        previous_episode = int(self.resume_metrics.get("episode", 0))
         self.start_episode = max(1, previous_episode + 1)
         logger.info(
             "Resumed policy from %s; continuing at episode %d.",
@@ -198,11 +208,34 @@ class MAPPOTrainer:
             self.start_episode,
         )
 
+    @staticmethod
+    def _curriculum_stage(tau: float, enabled: bool = True) -> int:
+        """Returns a monotonic difficulty rank used for checkpoint comparison."""
+        if not enabled:
+            return 0
+        if tau < 0.25:
+            return 1
+        if tau < 0.50:
+            return 2
+        if tau < 0.75:
+            return 3
+        return 4
+
+    @staticmethod
+    def _checkpoint_rank(metrics: Dict[str, Any]) -> Tuple[int, float, float]:
+        """Ranks comparable training checkpoints without favoring easy stages."""
+        return (
+            int(metrics.get("curriculum_stage", 0)),
+            float(metrics.get("survival_rate", 0.0)),
+            float(metrics.get("reward", float("-inf"))),
+        )
+
     def train_episode(self, episode_idx: int) -> Dict[str, float]:
         """Runs a single episode rollout and performs PPO update."""
         # Continuous Monotonic Curriculum Progression
         total_eps = max(1, getattr(self, "num_episodes", 100))
         tau = min(1.0, max(0.0, (episode_idx - 1) / max(1, total_eps - 1)))
+        curriculum_stage = self._curriculum_stage(tau, self.curriculum)
 
         if self.curriculum:
             # Pedagogical scenario stages based on normalized progress tau in [0, 1]
@@ -329,6 +362,9 @@ class MAPPOTrainer:
                     if p.path and sec_target in p.path:
                         p.path = []
                         p.state = PedestrianState.REROUTING
+                # The disaster was injected after the previous environment step.
+                # Refresh observations so the policy sees the new hazard immediately.
+                obs = self.env.get_observations()
 
             # Prepare batch tensor for all agents: (N, obs_dim)
             obs_array = np.stack([obs[agent] for agent in self.env.agents])
@@ -363,7 +399,9 @@ class MAPPOTrainer:
             next_obs, rewards, terminations, truncations, infos = self.env.step(action_dict)
 
             reward = rewards[self.env.agents[0]]
-            done = any(terminations.values()) or any(truncations.values())
+            terminated = any(terminations.values())
+            truncated = any(truncations.values())
+            done = terminated or truncated
 
             self.buffer.add(
                 node_features=obs_array,
@@ -373,7 +411,7 @@ class MAPPOTrainer:
                 action_masks=masks_np,
                 reward=reward,
                 value=val_scalar,
-                done=done,
+                terminated=terminated,
             )
 
             total_reward += reward
@@ -413,6 +451,7 @@ class MAPPOTrainer:
             "survival_rate": round(survival_rate, 1),
             "sim_time": metrics["sim_time"],
             "stage_name": stage_name,
+            "curriculum_stage": curriculum_stage,
             "hazard_type": hazard_type,
             "intensity": intensity,
             "dual": dual_injected,
@@ -420,7 +459,7 @@ class MAPPOTrainer:
         }
 
     def _update_ppo(self, returns: np.ndarray, advantages: np.ndarray) -> Dict[str, float]:
-        """Performs PPO policy and value clipping updates."""
+        """Performs clipped PPO actor updates with a robust critic objective."""
         T = len(returns)
         if T == 0:
             return {"loss": 0.0, "pi_loss": 0.0, "v_loss": 0.0, "entropy": 0.0}
@@ -431,66 +470,115 @@ class MAPPOTrainer:
         total_pi_loss = 0.0
         total_v_loss = 0.0
         total_entropy = 0.0
+        total_approx_kl = 0.0
+        total_clip_fraction = 0.0
+        samples_seen = 0
 
-        for epoch in range(self.ppo_epochs):
-            for t in range(T):
-                nf = torch.tensor(
-                    self.buffer.node_features[t], dtype=torch.float32, device=self.device
+        # Keep dropout disabled while retaining gradients. Otherwise old and new
+        # log-probabilities differ even before an optimizer step.
+        self.policy.eval()
+
+        for _epoch in range(self.ppo_epochs):
+            permutation = torch.randperm(T).tolist()
+            for batch_start in range(0, T, self.ppo_batch_size):
+                batch_indices = permutation[batch_start:batch_start + self.ppo_batch_size]
+                batch_pi_losses = []
+                batch_v_losses = []
+                batch_entropies = []
+                batch_kls = []
+                batch_clip_fractions = []
+
+                for t in batch_indices:
+                    nf = torch.tensor(
+                        self.buffer.node_features[t],
+                        dtype=torch.float32,
+                        device=self.device,
+                    )
+                    hs = torch.tensor(
+                        self.buffer.hidden_states[t],
+                        dtype=torch.float32,
+                        device=self.device,
+                    )
+                    act = torch.tensor(
+                        self.buffer.actions[t], dtype=torch.long, device=self.device
+                    )
+                    old_lp = torch.tensor(
+                        self.buffer.action_log_probs[t],
+                        dtype=torch.float32,
+                        device=self.device,
+                    )
+
+                    masks_t = torch.tensor(
+                        self.buffer.action_masks[t],
+                        dtype=torch.bool,
+                        device=self.device,
+                    )
+
+                    val_pred, new_lp, entropy = self.policy.evaluate_actions(
+                        node_features=nf,
+                        edge_index=self.edge_index,
+                        hidden_state=hs,
+                        actions=act,
+                        action_masks=masks_t,
+                    )
+
+                    # Each router shares the cooperative team advantage at this step.
+                    log_ratio = new_lp - old_lp
+                    ratio = torch.exp(log_ratio.clamp(-20.0, 20.0))
+                    adv = adv_t[t]
+
+                    surr1 = ratio * adv
+                    surr2 = torch.clamp(
+                        ratio, 1.0 - self.clip_ratio, 1.0 + self.clip_ratio
+                    ) * adv
+                    batch_pi_losses.append(-torch.min(surr1, surr2).mean())
+
+                    # Huber loss keeps large early-episode return errors from
+                    # overwhelming the actor through shared encoder gradients.
+                    batch_v_losses.append(
+                        F.smooth_l1_loss(val_pred.squeeze(), ret_t[t])
+                    )
+                    batch_entropies.append(entropy.mean())
+                    batch_kls.append(((ratio - 1.0) - log_ratio).mean())
+                    batch_clip_fractions.append(
+                        ((ratio - 1.0).abs() > self.clip_ratio).float().mean()
+                    )
+
+                pi_loss = torch.stack(batch_pi_losses).mean()
+                v_loss = torch.stack(batch_v_losses).mean()
+                entropy_mean = torch.stack(batch_entropies).mean()
+
+                loss = (
+                    pi_loss
+                    + self.value_coef * v_loss
+                    - self.entropy_coef * entropy_mean
                 )
-                hs = torch.tensor(
-                    self.buffer.hidden_states[t], dtype=torch.float32, device=self.device
-                )
-                act = torch.tensor(
-                    self.buffer.actions[t], dtype=torch.long, device=self.device
-                )
-                old_lp = torch.tensor(
-                    self.buffer.action_log_probs[t], dtype=torch.float32, device=self.device
-                )
-
-                masks_t = torch.tensor(
-                    self.buffer.action_masks[t], dtype=torch.bool, device=self.device
-                )
-
-                val_pred, new_lp, entropy = self.policy.evaluate_actions(
-                    node_features=nf,
-                    edge_index=self.edge_index,
-                    hidden_state=hs,
-                    actions=act,
-                    action_masks=masks_t,
-                )
-
-                # Mean ratio across agents: (N,)
-                ratio = torch.exp(new_lp - old_lp)
-                adv = adv_t[t]  # scalar advantage for step t
-
-                surr1 = ratio * adv
-                surr2 = torch.clamp(ratio, 1.0 - self.clip_ratio, 1.0 + self.clip_ratio) * adv
-                pi_loss = -torch.min(surr1, surr2).mean()
-
-                # Value loss: (1,) vs target scalar
-                v_loss = F.mse_loss(val_pred.squeeze(), ret_t[t])
-
-                ent_loss = -entropy.mean()
-
-                loss = pi_loss + self.value_coef * v_loss + self.entropy_coef * ent_loss
 
                 self.optimizer.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(self.policy.parameters(), max_norm=0.5)
                 self.optimizer.step()
 
-                total_pi_loss += float(pi_loss.item())
-                total_v_loss += float(v_loss.item())
-                total_entropy += float(entropy.mean().item())
+                batch_size = len(batch_indices)
+                samples_seen += batch_size
+                total_pi_loss += float(pi_loss.item()) * batch_size
+                total_v_loss += float(v_loss.item()) * batch_size
+                total_entropy += float(entropy_mean.item()) * batch_size
+                total_approx_kl += float(torch.stack(batch_kls).mean().item()) * batch_size
+                total_clip_fraction += float(
+                    torch.stack(batch_clip_fractions).mean().item()
+                ) * batch_size
 
-        denom = max(1, self.ppo_epochs * T)
+        denom = max(1, samples_seen)
         return {
             "pi_loss": round(total_pi_loss / denom, 4),
             "v_loss": round(total_v_loss / denom, 4),
             "entropy": round(total_entropy / denom, 4),
+            "approx_kl": round(total_approx_kl / denom, 6),
+            "clip_fraction": round(total_clip_fraction / denom, 4),
         }
 
-    def train(self, num_episodes: int = 50, eval_interval: int = 10):
+    def train(self, num_episodes: int = 50):
         self.num_episodes = num_episodes
         os.makedirs(self.save_dir, exist_ok=True)
         print("\n" + "=" * 80)
@@ -500,7 +588,11 @@ class MAPPOTrainer:
             print(f"   Resuming from episode {self.start_episode}: {self.resume_checkpoint}")
         print("=" * 80 + "\n")
 
-        best_survival = 0.0
+        best_rank: Tuple[int, float, float] = (
+            self._checkpoint_rank(self.resume_metrics)
+            if self.resume_metrics
+            else (-1, float("-inf"), float("-inf"))
+        )
 
         for ep in range(self.start_episode, num_episodes + 1):
             t0 = time.time()
@@ -529,47 +621,75 @@ class MAPPOTrainer:
                 f"Sim: {sim_t:4.1f}s | "
                 f"Wall: {dt:4.1f}s | "
                 f"R: {rew:6.2f} | "
-                f"Loss: (π={metrics['pi_loss']:.3f}, V={metrics['v_loss']:.3f})"
+                f"Loss: (π={metrics['pi_loss']:.3f}, V={metrics['v_loss']:.3f}) | "
+                f"KL: {metrics.get('approx_kl', 0.0):.4f} | "
+                f"Clip: {metrics.get('clip_fraction', 0.0):.2f}"
             )
 
-            # Checkpoint best model
-            if surv > best_survival or ep == num_episodes:
-                best_survival = max(best_survival, surv)
+            # Compare only like-for-like curriculum maturity first. A high score
+            # on the easy opening stage must not permanently beat a later policy.
+            current_rank = self._checkpoint_rank(metrics)
+            if current_rank > best_rank:
+                best_rank = current_rank
                 best_path = os.path.join(self.save_dir, "best_policy.pt")
-                self.policy.save_checkpoint(best_path, extra_meta=metrics)
+                self.policy.save_checkpoint(
+                    best_path,
+                    extra_meta=metrics,
+                    optimizer_state_dict=self.optimizer.state_dict(),
+                )
                 if os.path.basename(self.save_dir) == "directional":
                     root_best = os.path.join(os.path.dirname(self.save_dir), "best_policy.pt")
                     try:
-                        self.policy.save_checkpoint(root_best, extra_meta=metrics)
+                        self.policy.save_checkpoint(
+                            root_best,
+                            extra_meta=metrics,
+                            optimizer_state_dict=self.optimizer.state_dict(),
+                        )
                     except Exception:
                         pass
                 else:
                     dir_best = os.path.join(self.save_dir, "directional", "best_policy.pt")
                     try:
                         os.makedirs(os.path.dirname(dir_best), exist_ok=True)
-                        self.policy.save_checkpoint(dir_best, extra_meta=metrics)
+                        self.policy.save_checkpoint(
+                            dir_best,
+                            extra_meta=metrics,
+                            optimizer_state_dict=self.optimizer.state_dict(),
+                        )
                     except Exception:
                         pass
 
             # Save latest checkpoint
             latest_path = os.path.join(self.save_dir, "st_tba_gat_latest.pt")
-            self.policy.save_checkpoint(latest_path, extra_meta=metrics)
+            self.policy.save_checkpoint(
+                latest_path,
+                extra_meta=metrics,
+                optimizer_state_dict=self.optimizer.state_dict(),
+            )
             if os.path.basename(self.save_dir) == "directional":
                 root_latest = os.path.join(os.path.dirname(self.save_dir), "st_tba_gat_latest.pt")
                 try:
-                    self.policy.save_checkpoint(root_latest, extra_meta=metrics)
+                    self.policy.save_checkpoint(
+                        root_latest,
+                        extra_meta=metrics,
+                        optimizer_state_dict=self.optimizer.state_dict(),
+                    )
                 except Exception:
                     pass
             else:
                 dir_latest = os.path.join(self.save_dir, "directional", "st_tba_gat_latest.pt")
                 try:
                     os.makedirs(os.path.dirname(dir_latest), exist_ok=True)
-                    self.policy.save_checkpoint(dir_latest, extra_meta=metrics)
+                    self.policy.save_checkpoint(
+                        dir_latest,
+                        extra_meta=metrics,
+                        optimizer_state_dict=self.optimizer.state_dict(),
+                    )
                 except Exception:
                     pass
 
         print("\n" + "=" * 80)
-        print(f"✅ TRAINING FINISHED! Best Survival Rate: {best_survival:.1f}%")
+        print(f"✅ TRAINING FINISHED! Best checkpoint rank: {best_rank}")
         print(f"   Checkpoint saved to: {os.path.join(self.save_dir, 'best_policy.pt')}")
         print("=" * 80 + "\n")
 
@@ -605,9 +725,9 @@ def run_benchmark(
             max_corridors=env.MAX_CORRIDORS,
         ).to(device_obj)
         print("   Using initialized ST-TBA-GAT model")
+    policy.eval()
 
     edge_index = torch.tensor(env.edge_index, dtype=torch.long, device=device_obj)
-    action_masks = torch.tensor(env.get_all_action_masks(), dtype=torch.bool, device=device_obj)
 
     scenarios = [
         {"node_id": "reactor_1", "hazard_type": "FIRE", "intensity": 0.95},
@@ -693,7 +813,7 @@ def run_benchmark(
                     edge_index=edge_index,
                     hidden_state=hs,
                     action_masks=live_masks,
-                    deterministic=False,
+                    deterministic=True,
                 )
             acts_np = acts_t.cpu().numpy()
             act_dict = {a: acts_np[i] for i, a in enumerate(env.agents)}
@@ -739,6 +859,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ST-TBA-GAT MAPPO Training & Benchmark")
     parser.add_argument("--episodes", type=int, default=20, help="Number of training episodes")
     parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
+    parser.add_argument(
+        "--ppo-batch-size",
+        type=int,
+        default=16,
+        help="Number of rollout timesteps per PPO minibatch",
+    )
     parser.add_argument("--device", type=str, default="cpu", help="Device (cpu or cuda)")
     parser.add_argument("--save-dir", type=str, default="checkpoints", help="Directory to save checkpoints")
     parser.add_argument("--min-evacuees", type=int, default=20, help="Minimum headcount per episode (e.g. 20)")
@@ -762,6 +888,7 @@ if __name__ == "__main__":
     else:
         trainer = MAPPOTrainer(
             lr=args.lr,
+            ppo_batch_size=args.ppo_batch_size,
             device=args.device,
             save_dir=args.save_dir,
             min_evacuees=args.min_evacuees,

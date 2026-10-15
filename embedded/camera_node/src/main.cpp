@@ -10,6 +10,7 @@
 #include <WiFi.h>
 #include <esp_now.h>
 #include "esp_camera.h"
+#include "hazard_packet.h"
 
 // ==========================================
 // Select Camera Model Pinout (Default: AI-Thinker)
@@ -49,15 +50,10 @@
   #define NODE_CAPACITY 30
 #endif
 
-// Telemetry message structure (fits 4-byte / 8-byte gossip packet)
-typedef struct __attribute__((packed)) {
-    char node_id[16];
-    uint16_t head_count;
-    uint8_t crowd_density_pct; // 0 - 200% of capacity
-    int8_t delta_rho;          // Change since last gossip broadcast
-} CameraGossipPacket;
+#ifndef NODE_DIRECTION_MASK
+  #define NODE_DIRECTION_MASK 0x00
+#endif
 
-CameraGossipPacket packet;
 uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 unsigned long lastProcessTime = 0;
@@ -159,14 +155,13 @@ void loop() {
             float density_ratio = (float)count / (float)NODE_CAPACITY;
             int8_t delta = (int8_t)(count - last_count);
 
-            strncpy(packet.node_id, NODE_ID, sizeof(packet.node_id));
-            packet.head_count = count;
-            packet.crowd_density_pct = (uint8_t)min(255, (int)(density_ratio * 100.0f));
-            packet.delta_rho = delta;
+            HazardPacket32 packet = make_hazard_packet(
+                NODE_DIRECTION_MASK, 0.0f, density_ratio, 0
+            );
 
             // Broadcast delta gossip packet only on significant crowd change or heartbeat
             if (abs(delta) >= 2 || (now % 3000 < 250)) {
-                esp_now_send(broadcastAddress, (uint8_t *)&packet, sizeof(packet));
+                esp_now_send(broadcastAddress, reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
                 Serial.printf("[%s] Vision Telemetry: Count=%d | Density=%.1f%% | Delta=%+d\n",
                               NODE_ID, count, density_ratio * 100.0f, delta);
             }

@@ -12,6 +12,7 @@
 #include "hazard_calc.h"
 #include "mesh_comm.h"
 #include "config.h"
+#include "hazard_packet.h"
 
 // State variables
 unsigned long lastSensorReadTime = 0;
@@ -65,24 +66,22 @@ void loop() {
     if (currentMillis - lastBroadcastTime >= BROADCAST_INTERVAL_MS) {
         lastBroadcastTime = currentMillis;
         
-        // Construct payload (simple struct serialization)
-        struct {
-            char node_id[32];
-            float hazard;
-            float gas;
-            float temp;
-            float humidity;
-            int presence;
-        } payload;
-        
-        strncpy(payload.node_id, NODE_ID, sizeof(payload.node_id));
-        payload.hazard = current_hazard;
-        payload.gas = current_gas;
-        payload.temp = current_temp;
-        payload.humidity = current_hum;
-        payload.presence = current_presence;
-        
-        mesh_broadcast((uint8_t*)&payload, sizeof(payload));
+        const float crowd_density = constrain(
+            static_cast<float>(current_presence) / static_cast<float>(NODE_CAPACITY),
+            0.0f,
+            2.0f
+        );
+        const uint8_t hazard_type = current_temp >= TEMP_ALARM_C
+            ? 1  // FIRE
+            : (current_gas >= GAS_ALARM_PPM ? 3 : 0);  // GAS_RELEASE or NONE
+        HazardPacket32 packet = make_hazard_packet(
+            NODE_DIRECTION_MASK,
+            current_hazard,
+            crowd_density,
+            hazard_type
+        );
+
+        mesh_broadcast(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
     }
 
     // 5. Print debug info to serial

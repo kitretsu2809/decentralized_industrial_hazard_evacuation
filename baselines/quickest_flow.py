@@ -76,8 +76,9 @@ class QuickestFlowRouter:
         actions = {}
         for agent in agents:
             node_idx = int(agent.split('_')[1])
-            nbrs = neighbors_map.get(node_idx, [])
-            if not nbrs:
+            direction_slots = neighbors_map.get(node_idx, [])
+            available = [(slot, neighbor) for slot, neighbor in enumerate(direction_slots) if neighbor is not None]
+            if not available:
                 actions[agent] = 0
                 continue
 
@@ -85,16 +86,17 @@ class QuickestFlowRouter:
                 actions[agent] = 0
                 continue
 
-            best_nbr = nbrs[0]
+            best_slot, best_nbr = available[0]
             best_time = float('inf')
 
-            for nbr in nbrs:
+            for slot, nbr in available:
                 edge_cost = G_flow.get_edge_data(node_idx, nbr, {}).get('weight', 10.0)
                 tot_time = edge_cost + arrival_times.get(nbr, 1e8)
                 if tot_time < best_time:
                     best_time = tot_time
+                    best_slot = slot
                     best_nbr = nbr
 
-            actions[agent] = nbrs.index(best_nbr)
+            actions[agent] = best_slot
 
         return actions

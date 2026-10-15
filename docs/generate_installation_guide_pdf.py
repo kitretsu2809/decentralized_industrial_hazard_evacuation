@@ -373,28 +373,41 @@ The policy consists of the Spatio-Temporal Graph Attention network coupled to a 
 <pre><code># Command executed in terminal:
 python -c '
 import torch
-from simulator.policy.st_tba_gat import STTBAGATPolicy
+import torch.nn as nn
+from simulator.policy.st_tba_gat import ST_TBA_GAT
 
 # 1. Instantiate policy and load best trained checkpoint
-model = STTBAGATPolicy(node_feat_dim=34, hidden_dim=64, num_actions=7)
-checkpoint = torch.load("checkpoints/best_policy.pt", map_location="cpu")
-model.load_state_dict(checkpoint["model_state_dict"])
+model = ST_TBA_GAT.load_checkpoint("checkpoints/directional/best_policy.pt")
+assert model.node_dim == 51 and model.max_corridors == 8
 model.eval()
 
-# 2. Trace dummy inputs for local node inference
-dummy_feat = torch.randn(1, 34)              # Local 34-feature sensor observation
-dummy_edge = torch.zeros((2, 6), dtype=torch.long) # Local corridor adjacency
-dummy_hidden = torch.zeros(1, 64)             # Prior GRU recurrent hidden state
+class ActorExport(nn.Module):
+    def __init__(self, policy):
+        super().__init__()
+        self.policy = policy
+
+    def forward(self, node_features, edge_index, hidden_state, action_mask):
+        logits, next_hidden = self.policy.forward_actor(
+            node_features, edge_index, hidden_state, action_mask
+        )
+        return logits, next_hidden, self.policy.forward_critic(next_hidden)
+
+# 2. Trace a 36-node graph: 51 features and 9 choices (8 directions + standby)
+export_model = ActorExport(model)
+dummy_feat = torch.randn(36, 51)
+dummy_edge = torch.tensor([[0, 1], [1, 0]], dtype=torch.long)
+dummy_hidden = torch.zeros(36, 64)
+dummy_mask = torch.ones(36, 9, dtype=torch.bool)
 
 # 3. Export to optimized ONNX graph
 torch.onnx.export(
-    model,
-    (dummy_feat, dummy_edge, dummy_hidden),
+    export_model,
+    (dummy_feat, dummy_edge, dummy_hidden, dummy_mask),
     "models/policy.onnx",
-    input_names=["node_features", "edge_index", "hidden_state"],
+    input_names=["node_features", "edge_index", "hidden_state", "action_mask"],
     output_names=["action_logits", "new_hidden_state", "value"],
     opset_version=14,
-    dynamic_axes={"edge_index": {1: "num_edges"}}
+    dynamic_axes={"node_features": {0: "num_nodes"}, "edge_index": {1: "num_edges"}}
 )
 print("Successfully exported policy.onnx (73.0 KB)")
 '</code></pre>

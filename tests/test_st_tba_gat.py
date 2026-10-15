@@ -6,9 +6,9 @@ from simulator.policy.st_tba_gat import ST_TBA_GAT, GATv2Layer, ReflexiveSafetyO
 class TestSTTBAGATPolicy(unittest.TestCase):
     def setUp(self):
         self.num_nodes = 36
-        self.node_dim = 41
+        self.node_dim = 51
         self.hidden_dim = 64
-        self.max_corridors = 6
+        self.max_corridors = 8
 
         self.model = ST_TBA_GAT(
             node_dim=self.node_dim,
@@ -33,7 +33,7 @@ class TestSTTBAGATPolicy(unittest.TestCase):
         )
 
         self.assertEqual(actions.shape, (self.num_nodes,))
-        self.assertTrue(torch.all((actions >= 0) & (actions < 7)))
+        self.assertTrue(torch.all((actions >= 0) & (actions < 9)))
         self.assertEqual(log_probs.shape, (self.num_nodes,))
         self.assertEqual(h_new.shape, (self.num_nodes, self.hidden_dim))
         self.assertEqual(val.shape, (1,))
@@ -59,7 +59,7 @@ class TestSTTBAGATPolicy(unittest.TestCase):
     def test_evaluate_actions_and_backprop(self):
         x = torch.randn(self.num_nodes, self.node_dim)
         h = torch.zeros(self.num_nodes, self.hidden_dim)
-        actions = torch.randint(0, 7, (self.num_nodes,))
+        actions = torch.randint(0, 9, (self.num_nodes,))
 
         values, log_probs, entropy = self.model.evaluate_actions(
             node_features=x,
@@ -87,6 +87,12 @@ class TestSTTBAGATPolicy(unittest.TestCase):
 
         if os.path.exists(save_path):
             os.remove(save_path)
+
+    def test_default_model_uses_current_directional_layout(self):
+        model = ST_TBA_GAT()
+        self.assertEqual(model.node_dim, 51)
+        self.assertEqual(model.max_corridors, 8)
+        self.assertEqual(model.NUM_ACTIONS, 9)
 
 if __name__ == "__main__":
     unittest.main()

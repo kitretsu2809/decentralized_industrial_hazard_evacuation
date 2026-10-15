@@ -32,6 +32,7 @@ from baselines.nfpa_heuristic import NFPAStaticRouter
 from baselines.d_star_lite import DStarLiteRouter
 from baselines.quickest_flow import QuickestFlowRouter
 from evaluation.scenarios import SCENARIOS, DisasterScenario
+from core.graph.directions import MAX_DIRECTIONS
 
 
 def compute_iqm(data: np.ndarray) -> float:
@@ -115,12 +116,12 @@ def evaluate_single_run(
                 node_occ[p.current_node] += 1.0
 
         if model_type == 'nfpa_static':
-            actions = nfpa_router.get_actions(env.agents, env.neighbors)
+            actions = nfpa_router.get_actions(env.agents, env.directional_neighbors)
         elif model_type == 'd_star_lite':
             # Dynamic D* Lite with exact real-time hazard updates (PARITY OF INFORMATION)
-            actions = dstar_router.update_and_route(hazard_conc, env.agents, env.neighbors)
+            actions = dstar_router.update_and_route(hazard_conc, env.agents, env.directional_neighbors)
         elif model_type == 'quickest_flow':
-            actions = qflow_router.get_actions(env.agents, env.neighbors, hazard_conc, node_occ)
+            actions = qflow_router.get_actions(env.agents, env.directional_neighbors, hazard_conc, node_occ)
         elif model_type == 'gat_marl':
             if policy is None:
                 actions = {a: env.action_space(a).sample() for a in env.agents}
@@ -139,10 +140,10 @@ def evaluate_single_run(
 
                 for agent in env.agents:
                     node_idx = int(agent.split('_')[1])
-                    nbrs = env.neighbors[node_idx]
-                    valid_slots = min(len(nbrs), env.max_corridors)
-                    for slot in range(valid_slots):
-                        nbr = nbrs[slot]
+                    direction_slots = env.directional_neighbors[node_idx]
+                    for slot, nbr in enumerate(direction_slots[:env.max_corridors]):
+                        if nbr is None:
+                            continue
                         if env.edge_info.get((node_idx, nbr), {}).get('throughput', 1.0) > 0:
                             action_masks[node_idx, slot] = 1.0
                         nbr_hazards[node_idx, slot] = float(hazard_conc[nbr])
@@ -265,7 +266,11 @@ def main():
     print("==========================================================================")
 
     # Initialize GAT-MARL policy
-    policy = PermutationInvariantGATPolicy(node_dim=5, edge_dim=3, hidden_dim=64, max_corridors=6, heads=4)
+    policy = PermutationInvariantGATPolicy(
+        node_dim=5, edge_dim=3, hidden_dim=64,
+        max_corridors=MAX_DIRECTIONS,
+        heads=4,
+    )
     if os.path.exists(args.checkpoint):
         try:
             state_dict = torch.load(args.checkpoint, map_location='cpu', weights_only=True)

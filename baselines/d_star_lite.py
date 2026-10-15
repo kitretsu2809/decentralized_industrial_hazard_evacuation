@@ -64,8 +64,9 @@ class DStarLiteRouter:
         actions = {}
         for agent in agents:
             node_idx = int(agent.split('_')[1])
-            nbrs = neighbors_map.get(node_idx, [])
-            if not nbrs:
+            direction_slots = neighbors_map.get(node_idx, [])
+            available = [(slot, neighbor) for slot, neighbor in enumerate(direction_slots) if neighbor is not None]
+            if not available:
                 actions[agent] = 0
                 continue
 
@@ -73,10 +74,10 @@ class DStarLiteRouter:
                 actions[agent] = 0
                 continue
 
-            best_nbr = nbrs[0]
+            best_slot, best_nbr = available[0]
             best_cost = float('inf')
 
-            for nbr in nbrs:
+            for slot, nbr in available:
                 c_u = float(hazard_conc[node_idx]) if node_idx < len(hazard_conc) else 0.0
                 c_nbr = float(hazard_conc[nbr]) if nbr < len(hazard_conc) else 0.0
                 max_c = max(c_u, c_nbr)
@@ -86,8 +87,9 @@ class DStarLiteRouter:
                 total_cost = step_cost + dist_to_exit.get(nbr, 1e8)
                 if total_cost < best_cost:
                     best_cost = total_cost
+                    best_slot = slot
                     best_nbr = nbr
 
-            actions[agent] = nbrs.index(best_nbr)
+            actions[agent] = best_slot
 
         return actions

@@ -6,6 +6,7 @@ from typing import Dict, Tuple, Any, Optional
 
 from core.messaging.schemas import EnvironmentStateMsg, PolicyActionMsg
 from core.policy.inference import PolicyInference
+from core.graph.directions import MAX_DIRECTIONS
 from .event_bus import PolicyEventBus
 
 try:
@@ -31,7 +32,7 @@ class PolicyInferenceServer:
             self.st_model = ActorCritic(
                 node_feature_dim=8,
                 embedding_dim=64,
-                max_actions=6,
+                max_actions=MAX_DIRECTIONS,
                 num_agents=25,
                 use_recurrent=True
             )
@@ -142,7 +143,7 @@ class PolicyInferenceServer:
                         else:
                             edge_actions[f"edge_{j}"] = 0  # ALLOW
                 else:
-                    for j in range(6):
+                    for j in range(MAX_DIRECTIONS):
                         edge_actions[f"edge_{j}"] = 1 if has_local_fire else 0
                         
                 # Door command: 0 = NO_CHANGE, 1 = LOCK

@@ -86,13 +86,16 @@ def simulate_run(env, policy_type: str, policy=None, seed: int = 42, max_steps: 
                 action_masks = torch.zeros((env.num_nodes, env.max_corridors), dtype=torch.float32)
                 for agent in env.agents:
                     node_idx = int(agent.split('_')[1])
-                    nbr_count = len(env.neighbors[node_idx])
-                    action_masks[node_idx, :min(nbr_count, env.max_corridors)] = 1.0
+                    for slot, neighbor in enumerate(env.directional_neighbors[node_idx][:env.max_corridors]):
+                        if neighbor is not None:
+                            action_masks[node_idx, slot] = 1.0
 
                 nbr_hazards = torch.zeros((env.num_nodes, env.max_corridors), dtype=torch.float32)
                 for agent in env.agents:
                     n_idx = int(agent.split('_')[1])
-                    for s, nbr in enumerate(env.neighbors[n_idx][:env.max_corridors]):
+                    for s, nbr in enumerate(env.directional_neighbors[n_idx][:env.max_corridors]):
+                        if nbr is None:
+                            continue
                         nbr_hazards[n_idx, s] = float(env.hazard_sim.concentration[nbr])
 
                 with torch.no_grad():
@@ -240,7 +243,10 @@ def export_video(seed: int = 42, output_path: str = "assets/demo_presentation.mp
     env = EvacuationParallelEnv(num_pedestrians=num_pedestrians, max_steps=max_steps, dt=1.0)
 
     # Load GAT policy if available
-    policy = PermutationInvariantGATPolicy(node_dim=5, edge_dim=3, hidden_dim=64, max_corridors=6, heads=4)
+    policy = PermutationInvariantGATPolicy(
+        node_dim=5, edge_dim=3, hidden_dim=64,
+        max_corridors=env.max_corridors, heads=4,
+    )
     if os.path.exists(checkpoint_path):
         try:
             policy.load_state_dict(torch.load(checkpoint_path, map_location='cpu'))
@@ -338,4 +344,3 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     export_video(seed=args.seed, output_path=args.output, max_steps=args.steps, checkpoint_path=args.checkpoint, num_pedestrians=args.pedestrians)
-

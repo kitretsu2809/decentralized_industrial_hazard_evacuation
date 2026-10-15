@@ -8,14 +8,14 @@ class TestIndustrialEvacuationEnv(unittest.TestCase):
 
     def test_environment_initialization(self):
         self.assertEqual(len(self.env.agents), 36)
-        self.assertEqual(self.env.MAX_CORRIDORS, 6)
-        self.assertEqual(self.env.obs_dim, 41)
+        self.assertEqual(self.env.MAX_CORRIDORS, 8)
+        self.assertEqual(self.env.obs_dim, 51)
 
         for agent in self.env.agents:
             obs_space = self.env.observation_spaces[agent]
             act_space = self.env.action_spaces[agent]
-            self.assertEqual(obs_space.shape, (41,))
-            self.assertEqual(act_space.n, 7)
+            self.assertEqual(obs_space.shape, (51,))
+            self.assertEqual(act_space.n, 9)
 
     def test_reset(self):
         obs, infos = self.env.reset(seed=123)
@@ -23,15 +23,15 @@ class TestIndustrialEvacuationEnv(unittest.TestCase):
         self.assertEqual(len(infos), 36)
 
         for agent in self.env.agents:
-            self.assertEqual(obs[agent].shape, (41,))
+            self.assertEqual(obs[agent].shape, (51,))
             self.assertIn("action_mask", infos[agent])
             mask = infos[agent]["action_mask"]
-            self.assertEqual(len(mask), 7)
+            self.assertEqual(len(mask), 9)
 
     def test_step_execution(self):
         obs, infos = self.env.reset(seed=456)
         actions = {
-            agent: np.random.randint(0, 7)
+            agent: np.random.randint(0, 9)
             for agent in self.env.agents
         }
         next_obs, rewards, terminations, truncations, next_infos = self.env.step(actions)
@@ -48,8 +48,8 @@ class TestIndustrialEvacuationEnv(unittest.TestCase):
 
     def test_action_masking(self):
         all_masks = self.env.get_all_action_masks()
-        self.assertEqual(all_masks.shape, (36, 7))
-        # Ensure every agent has at least 1 valid choice (Standby at index 6 is always valid)
+        self.assertEqual(all_masks.shape, (36, 9))
+        # Every agent has at least standby at index 8.
         self.assertTrue(np.all(all_masks.sum(axis=1) >= 1))
 
     def test_hazard_model_laplacian_conservation(self):
@@ -81,33 +81,37 @@ class TestIndustrialEvacuationEnv(unittest.TestCase):
 
     def test_pure_signboard_guidance(self):
         """Verifies pedestrian next waypoint is strictly determined by local signboard, not Dijkstra."""
-        self.env.sim.set_policy_mode("marl")
+        self.env.sim.policy_mode = "marl"
         u = self.env.agents[0]
         nbrs = self.env.agent_neighbors[u]
         if len(nbrs) >= 2:
             # Set signboard u action: corridor 0 = BLOCKED (2), corridor 1 = GREEN ARROW (3).
-            acts = np.zeros(6, dtype=np.int64)
-            acts[0] = 2  # Block first corridor
-            acts[1] = 3  # Directly point to second corridor
+            acts = np.zeros(8, dtype=np.int64)
+            occupied = [i for i, neighbor in enumerate(self.env.directional_neighbors[u]) if neighbor]
+            acts[occupied[0]] = 2
+            acts[occupied[1]] = 3
             self.env.sim.set_signboard_actions({u: acts})
 
             chosen = self.env.sim.get_next_waypoint(u, floor=1)
-            # Must choose corridor 1 (nbrs[1]), NOT blocked corridor 0
-            self.assertEqual(chosen, nbrs[1])
+            self.assertEqual(chosen, self.env.directional_neighbors[u][occupied[1]])
 
     def test_green_arrow_does_not_need_a_shortest_path_lookup(self):
         """A direct GREEN_ARROW remains authoritative even if the router is unavailable."""
-        self.env.sim.set_policy_mode("marl")
+        self.env.sim.policy_mode = "marl"
         u = self.env.agents[0]
         nbrs = self.env.agent_neighbors[u]
         if nbrs:
-            acts = np.zeros(6, dtype=np.int64)
-            acts[0] = 3
+            acts = np.zeros(8, dtype=np.int64)
+            direction_idx = next(i for i, neighbor in enumerate(self.env.directional_neighbors[u]) if neighbor)
+            acts[direction_idx] = 3
             self.env.sim.set_signboard_actions({u: acts})
             self.env.sim.router.get_path = lambda *_args, **_kwargs: self.fail(
                 "MARL sign guidance must not query Dijkstra."
             )
-            self.assertEqual(self.env.sim.get_next_waypoint(u, floor=1), nbrs[0])
+            self.assertEqual(
+                self.env.sim.get_next_waypoint(u, floor=1),
+                self.env.directional_neighbors[u][direction_idx],
+            )
 
     def test_iso_13571_fed_accumulation(self):
         """Verifies cumulative FED dose accumulation and casualty trigger."""
@@ -194,9 +198,57 @@ class TestIndustrialEvacuationEnv(unittest.TestCase):
             "cluster_node": "reactor_2",
             "cluster_ratio": 0.70,
         })
-        # First step with action 0
-        actions_1 = {agent: 0 for agent in self.env.agents}
-        self.env.step(actions_1)
+        target = "reactor_2"
+        self.env.observed_crowd_deltas[target] = 0.50
+        actions = {agent: self.env.MAX_CORRIDORS for agent in self.env.agents}
+        actions[target] = 0
+        _, _, _, _, infos = self.env.step(actions)
+        self.assertEqual(infos[target]["flipping_penalty"], 0.0)
+
+        # With no observed hazard/crowd change, another arrow flip is penalized.
+        self.env.observed_hazard_deltas = {agent: 0.0 for agent in self.env.agents}
+        self.env.observed_crowd_deltas = {agent: 0.0 for agent in self.env.agents}
+        actions[target] = 1
+        _, _, _, _, infos = self.env.step(actions)
+        self.assertEqual(infos[target]["flipping_penalty"], 1.0)
+
+    def test_external_hazard_refreshes_observation_immediately(self):
+        """A mid-step disaster must be visible before the next policy action."""
+        obs, _ = self.env.reset(options={"inject": False})
+        target = "reactor_2"
+        previous_hazard = float(obs[target][0])
+        self.env.sim.hazard.levels[target] = previous_hazard + 0.40
+
+        refreshed = self.env.get_observations()
+
+        self.assertAlmostEqual(refreshed[target][0], previous_hazard + 0.40, places=5)
+        self.assertAlmostEqual(
+            self.env.observed_hazard_deltas[target], 0.40, places=5
+        )
+
+    def test_neighbor_hazard_crosses_the_32_bit_packet_codec(self):
+        self.env.reset(options={"inject": False})
+        agent = next(
+            node_id for node_id, slots in self.env.directional_neighbors.items()
+            if any(neighbor is not None for neighbor in slots)
+        )
+        slot = next(
+            i for i, neighbor in enumerate(self.env.directional_neighbors[agent])
+            if neighbor is not None
+        )
+        neighbor = self.env.directional_neighbors[agent][slot]
+        self.env.sim.hazard.levels[neighbor] = 0.413
+
+        observations = self.env.get_observations()
+        encoded_neighbor_hazard = float(observations[agent][11 + slot * 5])
+        expected_quantized = round(0.413 * 255.0) / 255.0
+
+        self.assertAlmostEqual(encoded_neighbor_hazard, expected_quantized, places=6)
+        self.assertAlmostEqual(
+            self.env.received_packets[neighbor].hazard,
+            expected_quantized,
+            places=6,
+        )
 
     def test_topological_cycle_and_unreach_penalties(self):
         """Verifies that circular routing loops incur cycle_penalty and dead ends incur unreach_penalty."""
@@ -219,10 +271,8 @@ class TestIndustrialEvacuationEnv(unittest.TestCase):
         self.assertIsNotNone(v)
 
         # Make u point to v, and v point to u (a direct 2-node cycle)
-        u_nbrs = self.env.agent_neighbors[u]
-        v_nbrs = self.env.agent_neighbors[v]
-        u_act = u_nbrs.index(v)
-        v_act = v_nbrs.index(u)
+        u_act = self.env.directional_neighbors[u].index(v)
+        v_act = self.env.directional_neighbors[v].index(u)
 
         actions = {agent: self.env.MAX_CORRIDORS for agent in self.env.agents}
         actions[u] = u_act
@@ -240,4 +290,3 @@ class TestIndustrialEvacuationEnv(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

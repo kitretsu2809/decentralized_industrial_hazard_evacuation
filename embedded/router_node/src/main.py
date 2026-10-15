@@ -17,6 +17,8 @@ from pathlib import Path
 
 # Stub imports assuming core logic exists in sys.path
 from core.hazard.hazard_vector import combine_hazards
+from core.communication.hazard_packet import HazardPacket32
+from core.graph.directions import DIRECTION_NAMES
 from yolo_edge import YOLOEdge
 from mesh_client import MeshClient
 from hal_impl.jetson_camera import JetsonCamera
@@ -50,7 +52,15 @@ class RouterNode:
             self.config = yaml.safe_load(f)
         
         self.node_id = self.config['node']['id']
-        self.neighbors = self.config['neighbors']
+        configured_directions = self.config.get('directional_neighbors', {})
+        self.directional_neighbors = {
+            direction: configured_directions.get(direction)
+            for direction in DIRECTION_NAMES
+        }
+        self.neighbors = [
+            neighbor for neighbor in self.directional_neighbors.values()
+            if neighbor is not None
+        ]
         self.fps_target = self.config['hardware']['camera'].get('fps', 30)
         self.sleep_time = 1.0 / self.fps_target
 
@@ -99,7 +109,18 @@ class RouterNode:
                 
                 # 4. Broadcast to Mesh
                 crowd_count = sum(1 for d in detections if d.get('class_name') == 'person')
-                self.mesh.broadcast({'hazard': H_local, 'crowd': crowd_count})
+                capacity = max(1, int(self.config['node'].get('capacity', 1)))
+                direction_mask = sum(
+                    1 << index
+                    for index, direction in enumerate(DIRECTION_NAMES)
+                    if self.directional_neighbors[direction] is not None
+                )
+                packet = HazardPacket32(
+                    direction_mask=direction_mask if H_local < 0.80 else 0,
+                    hazard=H_local,
+                    crowd_density=min(2.0, crowd_count / float(capacity)),
+                )
+                self.mesh.broadcast(packet)
                 
                 # 5. Receive Neighbor Data
                 neighbor_data = self.mesh.receive_all()

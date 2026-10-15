@@ -34,11 +34,11 @@ This directory contains the deployment code for the LBP Decentralized Agentic Ev
 4. Run the main loop script.
 
 ## Network Configuration
-Nodes communicate using **ESP-NOW** for low-latency peer-to-peer messaging without needing a central Wi-Fi access point, or a **Thread** mesh network.
+Nodes communicate using **ESP-NOW** for low-latency peer-to-peer messaging without needing a central Wi-Fi access point, or a **Thread** mesh network. Both transports carry the same exact 32-bit hazard PDU: an eight-direction safety mask, quantized hazard and crowd bytes, hazard type, protocol version, and two-bit TTL. The transport's peer identity supplies the sender ID, so it is not duplicated inside the four-byte payload.
 See `embedded/router_node/config/network_config.yaml` for parameters.
 
 ## Node Configuration
-Each Router node must have a specific `node_config.yaml` defining its location, ID, connected neighbors, and hardware types. See `embedded/router_node/config/node_config.yaml` for an example.
+Each Router node must have a specific `node_config.yaml` defining its location, ID, explicit `N/NE/E/SE/S/SW/W/NW` neighbor slots, and hardware types. See `embedded/router_node/config/node_config.yaml` for an example.
 
 ## Testing Procedure
 1. Flash an observer node and verify sensor readings via serial.

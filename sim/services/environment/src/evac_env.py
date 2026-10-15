@@ -4,6 +4,7 @@ from gymnasium.spaces import Box, MultiDiscrete, Dict as GymDict, MultiBinary
 from pettingzoo import ParallelEnv
 from core.graph.types import Building, NodeType, EdgeState
 from core.graph.building_graph import BuildingGraph
+from core.graph.directions import MAX_DIRECTIONS, assign_direction_slots
 from sim.services.environment.src.fire_model import FireModel
 
 class EvacuationEnv(ParallelEnv):
@@ -25,8 +26,19 @@ class EvacuationEnv(ParallelEnv):
         ]
         self.agents = self.possible_agents.copy()
         
-        # Determine max neighbors across all agents for padding
-        self.max_neighbors = max((len(self.building_graph.get_neighbors(ag)) for ag in self.possible_agents), default=1)
+        # One stable slot per N/NE/E/SE/S/SW/W/NW direction.
+        self.max_neighbors = MAX_DIRECTIONS
+        positions = {node_id: node.position for node_id, node in self.building.all_nodes.items()}
+        floors = {node_id: node.floor for node_id, node in self.building.all_nodes.items()}
+        self.directional_neighbors = {
+            agent: assign_direction_slots(
+                agent,
+                self.building_graph.get_neighbors(agent),
+                positions,
+                floors,
+            )
+            for agent in self.possible_agents
+        }
         
         self.observation_spaces = {}
         self.action_spaces = {}
@@ -89,15 +101,15 @@ class EvacuationEnv(ParallelEnv):
         obs = {}
         for agent in self.agents:
             node = self.building.get_node(agent)
-            neighbors = self.building_graph.get_neighbors(agent)
+            direction_slots = self.directional_neighbors[agent]
             
             n_hazards = np.zeros(self.max_neighbors, dtype=np.float32)
             n_crowds = np.zeros(self.max_neighbors, dtype=np.float32)
             e_states = np.zeros(self.max_neighbors, dtype=np.int8)
             
-            for i, n_id in enumerate(neighbors):
-                if i >= self.max_neighbors:
-                    break
+            for i, n_id in enumerate(direction_slots):
+                if n_id is None:
+                    continue
                 n_node = self.building.get_node(n_id)
                 n_hazards[i] = n_node.hazard_score
                 n_cap = max(1, n_node.capacity)
@@ -126,13 +138,14 @@ class EvacuationEnv(ParallelEnv):
         
         # 1. Apply actions
         for agent, action in actions.items():
+            direction_slots = self.directional_neighbors[agent]
             neighbors = self.building_graph.get_neighbors(agent)
             edge_actions = action[:-1]
             door_action = action[-1]
             
-            for i, n_id in enumerate(neighbors):
-                if i >= self.max_neighbors:
-                    break
+            for i, n_id in enumerate(direction_slots):
+                if n_id is None:
+                    continue
                 edge = self.building_graph.get_edge_between(agent, n_id)
                 if not edge:
                     continue

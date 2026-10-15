@@ -19,6 +19,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.categorical import Categorical
 
+from core.graph.directions import MAX_DIRECTIONS
+
+
+DEFAULT_NODE_DIM = 11 + MAX_DIRECTIONS * 5
+
 
 class GATv2Layer(nn.Module):
     """
@@ -203,9 +208,9 @@ class ST_TBA_GAT(nn.Module):
 
     def __init__(
         self,
-        node_dim: int = 10,
+        node_dim: int = DEFAULT_NODE_DIM,
         hidden_dim: int = 64,
-        max_corridors: int = 6,
+        max_corridors: int = MAX_DIRECTIONS,
         gat_heads: int = 4,
         gat_layers: int = 2,
         dropout: float = 0.05,
@@ -289,7 +294,7 @@ class ST_TBA_GAT(nn.Module):
         """
         Computes actor logits for all agents and updates recurrent state.
         Returns:
-          logits: (N, max_corridors, 4)
+          logits: (N, max_corridors + 1), for eight directions plus standby
           new_hidden_state: (N, hidden_dim)
         """
         N = node_features.size(0)
@@ -434,7 +439,12 @@ class ST_TBA_GAT(nn.Module):
         return value, log_probs, entropy
 
     # ── Checkpointing & Export ────────────────────────────────────────────────
-    def save_checkpoint(self, path: str, extra_meta: Optional[Dict[str, Any]] = None):
+    def save_checkpoint(
+        self,
+        path: str,
+        extra_meta: Optional[Dict[str, Any]] = None,
+        optimizer_state_dict: Optional[Dict[str, Any]] = None,
+    ):
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         payload = {
             "model_state_dict": self.state_dict(),
@@ -446,28 +456,23 @@ class ST_TBA_GAT(nn.Module):
             "num_actions": self.NUM_ACTIONS,
             "extra_meta": extra_meta or {},
         }
+        if optimizer_state_dict is not None:
+            payload["optimizer_state_dict"] = optimizer_state_dict
         torch.save(payload, path)
 
     @classmethod
     def load_checkpoint(cls, path: str, device: str = "cpu") -> ST_TBA_GAT:
         payload = torch.load(path, map_location=device, weights_only=False)
         model = cls(
-            node_dim=payload.get("node_dim", 10),
+            node_dim=payload.get("node_dim", DEFAULT_NODE_DIM),
             hidden_dim=payload.get("hidden_dim", 64),
-            max_corridors=payload.get("max_corridors", 6),
+            max_corridors=payload.get("max_corridors", MAX_DIRECTIONS),
             gat_heads=payload.get("gat_heads", 4),
             gat_layers=payload.get("gat_layers", 2),
         )
-        try:
-            model.load_state_dict(payload["model_state_dict"])
-        except RuntimeError:
-            # Handle migration across action space dimensions: load matching layers
-            model_dict = model.state_dict()
-            pretrained = {
-                k: v for k, v in payload["model_state_dict"].items()
-                if k in model_dict and v.shape == model_dict[k].shape
-            }
-            model_dict.update(pretrained)
-            model.load_state_dict(model_dict)
+        # Architecture migrations must be retrained explicitly. Silently loading
+        # only matching tensors can make an untrained eight-direction head appear
+        # to be a valid checkpoint.
+        model.load_state_dict(payload["model_state_dict"], strict=True)
         model.to(device)
         return model

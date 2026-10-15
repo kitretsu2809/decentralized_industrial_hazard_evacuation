@@ -7,10 +7,15 @@ node:
   position: [100.0, 50.0]
   capacity: 50
 
-neighbors:
-  - "router_f1_corridor_main"
-  - "stairwell_a_f1"
-  - "elevator_f1"
+directional_neighbors:
+  N: "router_f1_corridor_main"
+  NE: null
+  E: null
+  SE: null
+  S: "stairwell_a_f1"
+  SW: null
+  W: null
+  NW: null
 
 hardware:
   camera:

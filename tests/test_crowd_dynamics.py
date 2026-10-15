@@ -1,5 +1,6 @@
 import unittest
 import numpy as np
+from core.graph.directions import MAX_DIRECTIONS
 from core.graph.types import NodeType
 from sim.services.environment.src.floorplan_generator import generate_industrial_plant
 from sim.services.environment.src.evac_env import EvacuationEnv
@@ -40,6 +41,25 @@ class TestCrowdDynamics(unittest.TestCase):
         # Evacuees should still be in the facility due to physical corridor travel time
         total_remaining = sum(self.env.evacuees_at_node.values())
         self.assertGreater(total_remaining, 0, "Evacuees instantly teleported across long corridors")
+
+    def test_direction_slot_action_controls_matching_corridor(self):
+        self.env.reset(seed=7)
+        agent = next(
+            node_id for node_id, slots in self.env.directional_neighbors.items()
+            if any(neighbor is not None for neighbor in slots)
+        )
+        slots = self.env.directional_neighbors[agent]
+        slot = next(i for i, neighbor in enumerate(slots) if neighbor is not None)
+        neighbor = slots[slot]
+        action = [0] * len(self.env.action_spaces[agent].nvec)
+        action[slot] = 2
+
+        self.env.step({agent: action})
+
+        edge = self.env.building_graph.get_edge_between(agent, neighbor)
+        self.assertEqual(self.env.max_neighbors, MAX_DIRECTIONS)
+        self.assertEqual(len(slots), MAX_DIRECTIONS)
+        self.assertEqual(edge.state.name, "LOCKED")
 
 if __name__ == '__main__':
     unittest.main()

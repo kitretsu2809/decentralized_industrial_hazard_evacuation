@@ -3,7 +3,7 @@ Main simulation loop — fixed-timestep accumulator pattern.
 Speed multiplier correctly controls how many physics steps run per wall-second.
 """
 from __future__ import annotations
-import sys, os, asyncio, math, random, time
+import sys, os, asyncio, math, random, time, threading
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Awaitable
 
 import numpy as np
@@ -16,6 +16,8 @@ from .pedestrian import Pedestrian, PedestrianState, spawn_pedestrians
 from .hazard_model import HazardModel, HazardType, DANGER_THRESHOLD, LETHAL_THRESHOLD
 from .dijkstra_router import DijkstraRouter
 from .social_force import SocialForceModel
+from core.communication.hazard_packet import HazardPacket32, unpack_hazard_packet
+from core.graph.directions import DIRECTION_NAMES, MAX_DIRECTIONS, assign_direction_slots
 
 
 def _build_adjacency_with_dist(edge_list):
@@ -102,6 +104,21 @@ class Simulation:
         self.static_exit_dists = _compute_static_exit_distances(
             self.edge_list, self.exits, self.node_positions
         )
+        self.agent_neighbors = {nid: [] for nid in self.node_positions}
+        for source, target, _distance, _width in self.edge_list:
+            if target not in self.agent_neighbors[source]:
+                self.agent_neighbors[source].append(target)
+            if source not in self.agent_neighbors[target]:
+                self.agent_neighbors[target].append(source)
+        self.directional_neighbors = {
+            node_id: assign_direction_slots(
+                node_id,
+                neighbors,
+                self.node_positions,
+                self.node_floors,
+            )
+            for node_id, neighbors in self.agent_neighbors.items()
+        }
 
         self.agents: List[Pedestrian] = []
         self.t: float        = 0.0
@@ -112,6 +129,13 @@ class Simulation:
         self._last_reroute: float = 0.0
         self._accumulator: float  = 0.0
         self._broadcast_cb: Optional[Callable[..., Awaitable]] = None
+        self._perception_provider: Optional[Callable[[], dict]] = None
+        self._perception_nodes: Dict[str, dict] = {}
+        self._mesh_inboxes: Dict[str, Dict[str, dict]] = {
+            node_id: {} for node_id in self.node_positions
+        }
+        self._pending_perception_updates: List[dict] = []
+        self._perception_lock = threading.RLock()
 
         self.policy_mode: str = "dijkstra"  # "dijkstra" | "marl" | "static"
         self.policy_multipliers: Dict[Tuple[str, str], float] = {}
@@ -121,6 +145,10 @@ class Simulation:
         self._static_paths: Dict[str, List[str]] = {}
         self.active_comm_nodes: Optional[Set[str]] = None
         self.policy_model = None
+        self.policy_ready: bool = False
+        self.policy_checkpoint: Optional[str] = None
+        self.policy_checkpoint_meta: Dict[str, Any] = {}
+        self.policy_load_error: Optional[str] = None
         self._policy_edge_index = None
         self._policy_action_masks = None
         self._policy_hidden = None
@@ -132,16 +160,16 @@ class Simulation:
         self._init_agents()
 
     def _init_policy(self):
+        self.policy_model = None
+        self.policy_ready = False
+        self.policy_checkpoint = None
+        self.policy_checkpoint_meta = {}
+        self.policy_load_error = None
         try:
             import torch
             from simulator.policy.st_tba_gat import ST_TBA_GAT
             self.sorted_nodes = sorted(list(self.node_positions.keys()))
             self.node_to_idx = {nid: i for i, nid in enumerate(self.sorted_nodes)}
-
-            self.agent_neighbors = {nid: [] for nid in self.sorted_nodes}
-            for s, t, d, w in self.edge_list:
-                if t not in self.agent_neighbors[s]: self.agent_neighbors[s].append(t)
-                if s not in self.agent_neighbors[t]: self.agent_neighbors[t].append(s)
 
             edges = []
             for s, nbrs in self.agent_neighbors.items():
@@ -151,17 +179,18 @@ class Simulation:
                     edges.append([u_idx, v_idx])
             self._policy_edge_index = torch.tensor(edges, dtype=torch.long).t()
             self._policy_action_masks = torch.zeros(
-                len(self.sorted_nodes), 7, dtype=torch.bool
+                len(self.sorted_nodes), MAX_DIRECTIONS + 1, dtype=torch.bool
             )
             for idx, nid in enumerate(self.sorted_nodes):
-                nbrs = self.agent_neighbors[nid]
-                for k in range(min(6, len(nbrs))):
-                    nbr = nbrs[k]
+                direction_slots = self.directional_neighbors[nid]
+                for k, nbr in enumerate(direction_slots):
+                    if nbr is None:
+                        continue
                     is_hoist = "hoist" in nid and "hoist" in nbr
                     is_dead_end = len(self.agent_neighbors.get(nbr, [])) <= 1 and nbr not in self.exits
                     if not is_hoist and not is_dead_end:
                         self._policy_action_masks[idx, k] = True
-                self._policy_action_masks[idx, 6] = True  # Standby option always valid
+                self._policy_action_masks[idx, MAX_DIRECTIONS] = True
 
             directional_ckpt = os.environ.get(
                 "ST_TBA_GAT_CHECKPOINT",
@@ -172,29 +201,62 @@ class Simulation:
             if os.path.exists(ckpt_path):
                 try:
                     self.policy_model = ST_TBA_GAT.load_checkpoint(ckpt_path, device="cpu")
-                except Exception:
-                    self.policy_model = ST_TBA_GAT(node_dim=41, hidden_dim=64, max_corridors=6)
+                    payload = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+                    expected_node_dim = 11 + MAX_DIRECTIONS * 5
+                    if (
+                        self.policy_model.max_corridors != MAX_DIRECTIONS
+                        or self.policy_model.node_dim != expected_node_dim
+                    ):
+                        raise ValueError(
+                            "checkpoint uses the retired six-corridor layout; "
+                            f"expected node_dim={expected_node_dim}, "
+                            f"max_corridors={MAX_DIRECTIONS}. Retrain MAPPO."
+                        )
+                    self.policy_checkpoint_meta = payload.get("extra_meta", {}) or {}
+                    self.policy_checkpoint = os.path.relpath(ckpt_path, _REPO)
+                    self.policy_ready = True
+                except Exception as exc:
+                    self.policy_load_error = f"Checkpoint rejected: {exc}"
             else:
-                self.policy_model = ST_TBA_GAT(node_dim=41, hidden_dim=64, max_corridors=6)
+                self.policy_load_error = "No trained policy checkpoint found"
+
+            if self.policy_model is None:
+                self._policy_hidden = None
+                return
+
             self.policy_model.eval()
-            self._policy_hidden = torch.zeros(len(self.sorted_nodes), 64)
+            self._policy_hidden = torch.zeros(
+                len(self.sorted_nodes), self.policy_model.hidden_dim
+            )
             self._last_hazards = {nid: 0.0 for nid in self.sorted_nodes}
             self._last_crowds = {nid: 0.0 for nid in self.sorted_nodes}
         except Exception as e:
             self.policy_model = None
+            self.policy_ready = False
+            self.policy_load_error = f"Policy runtime unavailable: {e}"
 
     def set_policy_mode(self, mode: str):
-        if mode in ("dijkstra", "marl", "static"):
-            self.policy_mode = mode
-            if mode == "marl":
+        if mode not in ("dijkstra", "marl", "static"):
+            return False
+
+        if mode == "marl":
+            if self.policy_model is None:
                 self._init_policy()
-                self._externally_controlled_signboards = False
-                self._reset_policy_memory()
-                self._refresh_live_policy_actions(force=True)
-            if mode == "static":
-                self.policy_multipliers = {}
-                self.router.update_weights({}, set())  # Reset to static geometric distance
-            self._reroute_all(force=True)
+            if not self.policy_ready or self.policy_model is None:
+                self.policy_mode = "dijkstra"
+                self._reroute_all(force=True)
+                return False
+
+        self.policy_mode = mode
+        if mode == "marl":
+            self._externally_controlled_signboards = False
+            self._reset_policy_memory()
+            self._refresh_live_policy_actions(force=True)
+        if mode == "static":
+            self.policy_multipliers = {}
+            self.router.update_weights({}, set())  # Reset to static geometric distance
+        self._reroute_all(force=True)
+        return True
 
     def _compute_static_paths(self):
         """Precomputes immutable blueprint shortest paths for NFPA 101 static signage."""
@@ -279,7 +341,9 @@ class Simulation:
             amber_corridors = []
             normal_corridors = []
 
-            for k, nbr in enumerate(nbrs[:6]):
+            for k, nbr in enumerate(self.directional_neighbors.get(current_node, ())):
+                if nbr is None:
+                    continue
                 act_code = int(acts[k]) if (acts is not None and k < len(acts)) else 0
                 hn = self.hazard.levels.get(nbr, 0.0)
                 is_blocked = (
@@ -400,16 +464,22 @@ class Simulation:
 
     # ── Control API ───────────────────────────────────────────────────────────
     def set_broadcast(self, cb): self._broadcast_cb = cb
+    def set_perception_provider(self, provider): self._perception_provider = provider
     def play(self):  self.running = True
     def pause(self): self.running = False
 
     def reset(self, num_evacuees=None, cluster_node=None, cluster_ratio=0.0):
-        if num_evacuees: self.num_evacuees = num_evacuees
+        if num_evacuees is not None:
+            self.num_evacuees = max(5, min(400, int(num_evacuees)))
         self.t = 0.0
         self._accumulator = 0.0
         self._last_reroute = 0.0
         self.alarm_active = False
         self.hazard.reset()
+        with self._perception_lock:
+            self._perception_nodes = {}
+            self._pending_perception_updates = []
+            self._mesh_inboxes = {node_id: {} for node_id in self.node_positions}
         self.router.update_weights({}, set())
         self.signboard_actions = {}
         self._externally_controlled_signboards = False
@@ -429,19 +499,22 @@ class Simulation:
                 agent.state = PedestrianState.REACTING
 
     def reset_alarm(self):
-        """Cancel alarm and return safe workers to workstation duty."""
+        """Cancel a drill alarm only after the sensed hazard has cleared."""
+        if any(level >= 0.05 for level in self.hazard.levels.values()):
+            return False
         self.alarm_active = False
         for agent in self.agents:
             if agent.state in (PedestrianState.REACTING, PedestrianState.MOVING, PedestrianState.REROUTING):
                 agent.state = PedestrianState.NORMAL
                 agent.path = []
                 agent.vx = agent.vy = 0.0
+        return True
 
     def toggle_alarm(self):
         if self.alarm_active:
-            self.reset_alarm()
-        else:
-            self.trigger_alarm()
+            return self.reset_alarm()
+        self.trigger_alarm()
+        return True
 
     def inject_disaster(self, node_id, htype_str, intensity):
         from .hazard_model import HAZARD_ALIASES
@@ -461,6 +534,153 @@ class Simulation:
         self._reroute_all(force=True)
         return True
 
+    def virtual_sensor_reading(self, node_id: str) -> Tuple[float, float, float]:
+        """Return deterministic virtual gas/temperature/humidity telemetry.
+
+        These values are derived from the physical hazard field and are kept
+        separate from video inference so the 1D temporal branch is not falsely
+        represented as a video model.
+        """
+        level = max(0.0, min(1.0, self.hazard.levels.get(node_id, 0.0)))
+        htype = self.hazard.types.get(node_id)
+        gas_multiplier = 1.0 if htype in (HazardType.GAS_RELEASE, HazardType.CHEMICAL_SPILL) else 0.35
+        thermal_multiplier = 1.0 if htype in (HazardType.FIRE, HazardType.EXPLOSION) else 0.25
+        gas_ppm = 8.0 + level * 220.0 * gas_multiplier
+        temperature_c = 24.0 + level * 90.0 * thermal_multiplier
+        humidity_pct = 52.0 - level * 12.0
+        return gas_ppm, temperature_c, humidity_pct
+
+    def apply_perception_update(self, update: dict) -> bool:
+        """Pack, deliver, and fuse one node's perception result."""
+        node_id = str(update.get("node_id", ""))
+        if node_id not in self.node_positions:
+            return False
+
+        vector = dict(update.get("vector") or {})
+        hazard_score = max(0.0, min(1.0, float(vector.get("hazard", 0.0))))
+        crowd_density = max(0.0, min(2.0, float(vector.get("crowd_density", 0.0))))
+        packet = self.make_hazard_packet(
+            node_id=node_id,
+            hazard=hazard_score,
+            crowd_density=crowd_density,
+            hazard_type=str(update.get("hazard_type") or "NONE"),
+        )
+        packet_bytes = packet.to_bytes()
+        decoded = unpack_hazard_packet(packet_bytes)
+        communication = {
+            **decoded.public_dict(),
+            "sender": node_id,
+            "recipients": list(self.agent_neighbors.get(node_id, [])),
+        }
+        normalized = {
+            **update,
+            "node_id": node_id,
+            "vector": {
+                "hazard": hazard_score,
+                "crowd_density": crowd_density,
+                "visual_confidence": max(0.0, min(1.0, float(vector.get("visual_confidence", 0.0)))),
+                "sensor_anomaly": max(0.0, min(1.0, float(vector.get("sensor_anomaly", 0.0)))),
+            },
+            "communication": communication,
+            "updated_at": float(update.get("updated_at", time.time())),
+        }
+        with self._perception_lock:
+            self._perception_nodes[node_id] = normalized
+            self._pending_perception_updates.append(normalized)
+            for recipient in self.agent_neighbors.get(node_id, []):
+                self._mesh_inboxes.setdefault(recipient, {})[node_id] = {
+                    **communication,
+                    "received_by": recipient,
+                    "updated_at": normalized["updated_at"],
+                }
+
+        return True
+
+    def make_hazard_packet(
+        self,
+        node_id: str,
+        hazard: float,
+        crowd_density: float,
+        hazard_type: str = "NONE",
+    ) -> HazardPacket32:
+        """Create the canonical node-to-node PDU used by live and training paths."""
+        if node_id not in self.node_positions:
+            raise KeyError(f"Unknown node {node_id!r}")
+        bounded_hazard = max(0.0, min(1.0, float(hazard)))
+        return HazardPacket32(
+            direction_mask=self._safe_direction_mask(node_id, bounded_hazard),
+            hazard=bounded_hazard,
+            crowd_density=max(0.0, min(2.0, float(crowd_density))),
+            hazard_type=hazard_type,
+        )
+
+    def _safe_direction_mask(self, node_id: str, local_hazard: float) -> int:
+        """Return one safe/usable bit for each of the node's eight direction slots."""
+        if local_hazard >= 0.80 or node_id in self.hazard.blocked:
+            return 0
+        mask = 0
+        for index, neighbor in enumerate(self.directional_neighbors.get(node_id, ())):
+            if neighbor is None:
+                continue
+            if neighbor in self.hazard.blocked:
+                continue
+            if self.hazard.levels.get(neighbor, 0.0) >= 0.80:
+                continue
+            if "hoist" in node_id and "hoist" in neighbor:
+                continue
+            mask |= 1 << index
+        return mask
+
+    def _drain_perception_updates(self) -> None:
+        """Apply worker-thread perception results on the simulation thread."""
+        with self._perception_lock:
+            pending = self._pending_perception_updates
+            self._pending_perception_updates = []
+
+        for update in pending:
+            node_id = update["node_id"]
+            vector = update["vector"]
+            hazard_score = float(vector["hazard"])
+
+            if hazard_score >= 0.10:
+                htype_name = str(update.get("hazard_type") or "GAS_RELEASE").upper()
+                htype = {
+                    "FIRE": HazardType.FIRE,
+                    "SMOKE": HazardType.FIRE,
+                    "STRUCTURAL_COLLAPSE": HazardType.EXPLOSION,
+                    "WEAPON": HazardType.EXPLOSION,
+                    "GAS_RELEASE": HazardType.GAS_RELEASE,
+                    "CHEMICAL_SPILL": HazardType.CHEMICAL_SPILL,
+                }.get(htype_name, HazardType.GAS_RELEASE)
+                self.hazard.inject(node_id, htype, hazard_score, sustained=False)
+                if hazard_score >= DANGER_THRESHOLD:
+                    self.trigger_alarm()
+                if self.policy_mode == "marl" and not self._externally_controlled_signboards:
+                    self._refresh_live_policy_actions(force=True)
+                self._reroute_all(force=True)
+
+    def perception_state(self) -> dict:
+        with self._perception_lock:
+            nodes = {node_id: dict(value) for node_id, value in self._perception_nodes.items()}
+            inboxes = {
+                node_id: {sender: dict(packet) for sender, packet in senders.items()}
+                for node_id, senders in self._mesh_inboxes.items()
+                if senders
+            }
+        runtime = self._perception_provider() if self._perception_provider else {
+            "capabilities": {},
+            "feeds": {},
+        }
+        return {
+            **runtime,
+            "nodes": nodes,
+            "mesh": {
+                "packet_size_bits": 32,
+                "direction_order": list(DIRECTION_NAMES),
+                "inboxes": inboxes,
+            },
+        }
+
     # ── Main async loop (fixed-timestep accumulator) ──────────────────────────
     async def run_loop(self):
         BROADCAST_INTERVAL = 0.08   # ~12 Hz
@@ -472,6 +692,8 @@ class Simulation:
             now     = time.monotonic()
             wall_dt = min(now - last_loop, 0.1)   # cap to avoid spiral-of-death
             last_loop = now
+
+            self._drain_perception_updates()
 
             if self.running:
                 # Accumulate sim-time to advance
@@ -485,7 +707,10 @@ class Simulation:
 
             if now - last_broadcast >= BROADCAST_INTERVAL:
                 if self._broadcast_cb:
-                    await self._broadcast_cb(self.state_dict())
+                    try:
+                        await self._broadcast_cb(self.state_dict())
+                    except Exception:
+                        pass
                 last_broadcast = now
 
             await asyncio.sleep(LOOP_SLEEP)
@@ -661,7 +886,7 @@ class Simulation:
 
     # ── Direct ST-TBA-GAT inference and serialisation ─────────────────────────
     def _policy_features(self):
-        """Builds the same 34-feature local observation used during MAPPO training."""
+        """Builds the same 51-feature local observation used during MAPPO training."""
         import torch
 
         node_counts = {nid: 0 for nid in self.sorted_nodes}
@@ -669,6 +894,31 @@ class Simulation:
             if ped.state not in (PedestrianState.EVACUATED, PedestrianState.CASUALTY):
                 if ped.current_node in node_counts:
                     node_counts[ped.current_node] += 1
+
+        with self._perception_lock:
+            perception_snapshot = dict(self._perception_nodes)
+
+        # Every remote hazard/crowd value crosses the same four-byte codec used
+        # by uploaded camera/sensor perception, keeping live inference aligned
+        # with the quantized observations used during training.
+        packet_snapshot = {}
+        for node_id in self.sorted_nodes:
+            capacity = max(1, self.node_capacities.get(node_id, 10))
+            density = min(2.0, node_counts.get(node_id, 0) / float(capacity))
+            perceived = perception_snapshot.get(node_id)
+            if perceived and time.time() - perceived.get("updated_at", 0.0) <= 5.0:
+                density = max(
+                    density,
+                    min(2.0, float(perceived.get("vector", {}).get("crowd_density", 0.0))),
+                )
+            hazard_type = self.hazard.types.get(node_id)
+            packet = self.make_hazard_packet(
+                node_id=node_id,
+                hazard=self.hazard.levels.get(node_id, 0.0),
+                crowd_density=density,
+                hazard_type=hazard_type.value if hazard_type else "NONE",
+            )
+            packet_snapshot[node_id] = unpack_hazard_packet(packet.to_bytes())
 
         edge_geometry = {}
         for source, target, distance, width in self.edge_list:
@@ -680,6 +930,12 @@ class Simulation:
             capacity = max(1, self.node_capacities.get(node_id, 10))
             population = node_counts[node_id]
             density = min(2.0, population / float(capacity))
+            perceived = perception_snapshot.get(node_id)
+            if perceived and time.time() - perceived.get("updated_at", 0.0) <= 5.0:
+                density = max(
+                    density,
+                    min(2.0, float(perceived.get("vector", {}).get("crowd_density", 0.0))),
+                )
             hazard = self.hazard.levels.get(node_id, 0.0)
             features = [
                 hazard,
@@ -694,20 +950,16 @@ class Simulation:
                 1.0 if self.alarm_active else 0.0,
                 min(1.0, self.static_exit_dists.get(node_id, 50.0) / 100.0),
             ]
-            for corridor_idx in range(6):
-                neighbours = self.agent_neighbors[node_id]
-                if corridor_idx >= len(neighbours):
+            for corridor_idx in range(MAX_DIRECTIONS):
+                neighbour = self.directional_neighbors[node_id][corridor_idx]
+                if neighbour is None:
                     features.extend([0.0, 0.0, 0.0, 0.0, 0.0])
                     continue
-                neighbour = neighbours[corridor_idx]
-                neighbour_capacity = max(1, self.node_capacities.get(neighbour, 10))
-                neighbour_density = min(
-                    2.0, node_counts.get(neighbour, 0) / float(neighbour_capacity)
-                )
+                neighbour_packet = packet_snapshot[neighbour]
                 distance, width = edge_geometry.get((node_id, neighbour), (10.0, 2.0))
                 features.extend([
-                    self.hazard.levels.get(neighbour, 0.0),
-                    neighbour_density,
+                    neighbour_packet.hazard,
+                    neighbour_packet.crowd_density,
                     min(1.0, distance / 30.0),
                     min(1.0, width / 5.0),
                     min(1.0, self.static_exit_dists.get(neighbour, 50.0) / 100.0),
@@ -743,13 +995,13 @@ class Simulation:
             signboard_dict = {}
             for idx, node_id in enumerate(self.sorted_nodes):
                 act_k = int(actions_np[idx]) if actions_np.ndim == 1 else int(actions_np[idx, 0])
-                nbrs = self.agent_neighbors.get(node_id, [])
-                phys_act = np.zeros(6, dtype=np.int64)
+                direction_slots = self.directional_neighbors.get(node_id, ())
+                phys_act = np.zeros(MAX_DIRECTIONS, dtype=np.int64)
                 loc_h = self.hazard.levels.get(node_id, 0.0)
 
                 arrow_idx = None
-                if act_k < len(nbrs):
-                    nbr = nbrs[act_k]
+                if act_k < len(direction_slots) and direction_slots[act_k] is not None:
+                    nbr = direction_slots[act_k]
                     nbr_h = self.hazard.levels.get(nbr, 0.0)
                     is_dead_end = len(self.agent_neighbors.get(nbr, [])) <= 1 and nbr not in self.exits
                     is_hoist = "hoist" in node_id and "hoist" in nbr
@@ -759,7 +1011,9 @@ class Simulation:
                 # When alarm is active, ensure every controller shows an authoritative exit route
                 if self.alarm_active and arrow_idx is None and node_id not in self.exits:
                     safe_nbrs = []
-                    for c_idx, neighbour in enumerate(nbrs[:6]):
+                    for c_idx, neighbour in enumerate(direction_slots):
+                        if neighbour is None:
+                            continue
                         nbr_h = self.hazard.levels.get(neighbour, 0.0)
                         is_dead_end = len(self.agent_neighbors.get(neighbour, [])) <= 1 and neighbour not in self.exits
                         is_hoist = "hoist" in node_id and "hoist" in neighbour
@@ -775,12 +1029,14 @@ class Simulation:
 
                 # Density-aware secondary flow-splitting arrow:
                 # If primary corridor is crowded (density >= 40%), illuminate an alternative safe forward corridor
-                if arrow_idx is not None and len(nbrs) > 1:
-                    primary_nbr = nbrs[arrow_idx]
+                if arrow_idx is not None and sum(n is not None for n in direction_slots) > 1:
+                    primary_nbr = direction_slots[arrow_idx]
                     p_occ = sum(1 for p in self.agents if p.current_node == primary_nbr and p.state.value in ("moving", "reacting", "danger", "rerouting"))
                     p_cap = max(1, self.node_capacities.get(primary_nbr, 10))
                     if (p_occ / float(p_cap)) >= 0.40:
-                        for c_idx, neighbour in enumerate(nbrs[:6]):
+                        for c_idx, neighbour in enumerate(direction_slots):
+                            if neighbour is None:
+                                continue
                             if c_idx != arrow_idx:
                                 nbr_h = self.hazard.levels.get(neighbour, 0.0)
                                 is_dead_end = len(self.agent_neighbors.get(neighbour, [])) <= 1 and neighbour not in self.exits
@@ -789,7 +1045,9 @@ class Simulation:
                                     arrow_indices.add(c_idx)
                                     break
 
-                for c_idx, neighbour in enumerate(nbrs[:6]):
+                for c_idx, neighbour in enumerate(direction_slots):
+                    if neighbour is None:
+                        continue
                     nbr_h = self.hazard.levels.get(neighbour, 0.0)
                     is_hoist = "hoist" in node_id and "hoist" in neighbour
                     if loc_h >= 0.80 or nbr_h >= 0.80 or is_hoist:
@@ -815,8 +1073,10 @@ class Simulation:
         for node_id in self.sorted_nodes:
             node_signs = []
             upstream_hazard = self.hazard.levels.get(node_id, 0.0)
-            actions = self.signboard_actions.get(node_id, np.zeros(6, dtype=np.int64))
-            for corridor_idx, neighbour in enumerate(self.agent_neighbors.get(node_id, [])[:6]):
+            actions = self.signboard_actions.get(node_id, np.zeros(MAX_DIRECTIONS, dtype=np.int64))
+            for corridor_idx, neighbour in enumerate(self.directional_neighbors.get(node_id, ())):
+                if neighbour is None:
+                    continue
                 downstream_hazard = self.hazard.levels.get(neighbour, 0.0)
                 action_code = int(actions[corridor_idx]) if corridor_idx < len(actions) else 0
                 if (
@@ -903,14 +1163,25 @@ class Simulation:
         return signboards
 
     def state_dict(self):
+        meta = self.policy_checkpoint_meta
         return {
             "t":            round(self.t, 1),
             "running":      self.running,
             "alarm_active": self.alarm_active,
             "policy_mode":  self.policy_mode,
+            "policy": {
+                "mode": self.policy_mode,
+                "ready": self.policy_ready,
+                "checkpoint": self.policy_checkpoint,
+                "episode": meta.get("episode"),
+                "curriculum_stage": meta.get("curriculum_stage"),
+                "survival_rate": meta.get("survival_rate"),
+                "load_error": self.policy_load_error,
+            },
             "speed":        self.speed,
             "pedestrians":  [a.to_dict() for a in self.agents],
             "hazards":      self.hazard.to_dict(),
+            "perception":   self.perception_state(),
             "signboards":   self.compute_signboards(),
             "metrics":      self.metrics(),
         }

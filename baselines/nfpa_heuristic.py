@@ -54,9 +54,12 @@ class NFPAStaticRouter:
         for agent in agents:
             node_idx = int(agent.split('_')[1])
             target_nbr = self.static_routes.get(node_idx, node_idx)
-            nbrs = neighbors_map.get(node_idx, [])
-            if target_nbr in nbrs:
-                actions[agent] = nbrs.index(target_nbr)
+            direction_slots = neighbors_map.get(node_idx, [])
+            if target_nbr in direction_slots:
+                actions[agent] = direction_slots.index(target_nbr)
             else:
-                actions[agent] = 0
+                actions[agent] = next(
+                    (slot for slot, neighbor in enumerate(direction_slots) if neighbor is not None),
+                    0,
+                )
         return actions

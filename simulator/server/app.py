@@ -3,13 +3,13 @@ FastAPI + WebSocket server for the Industrial Evacuation Simulator.
 Serves the static UI and streams simulation state at ~12 Hz via WebSocket.
 """
 from __future__ import annotations
-import os, sys, json, asyncio
+import os, sys, json, asyncio, tempfile, uuid
 from pathlib import Path
 from typing import Set
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 
 # Ensure repo root on path
 _SRV_DIR  = Path(__file__).parent
@@ -17,12 +17,49 @@ _SIM_DIR  = _SRV_DIR.parent
 _REPO_DIR = _SIM_DIR.parent
 sys.path.insert(0, str(_REPO_DIR))
 
+
+def _load_project_sensor_checkpoint() -> None:
+    """Load the local checkpoint setting when launched outside Docker.
+
+    Docker passes an absolute container path in compose.  For direct local
+    launches, reading this one setting keeps ``.env`` useful without adding a
+    runtime dependency on python-dotenv.  An explicitly exported environment
+    variable always takes precedence.
+    """
+    if os.environ.get("SENSOR_CNN_CHECKPOINT"):
+        return
+    env_file = _REPO_DIR / ".env"
+    if not env_file.is_file():
+        return
+    for raw_line in env_file.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip() != "SENSOR_CNN_CHECKPOINT":
+            continue
+        value = value.strip().strip("\"'")
+        checkpoint = Path(value)
+        if not checkpoint.is_absolute():
+            checkpoint = _REPO_DIR / checkpoint
+        os.environ["SENSOR_CNN_CHECKPOINT"] = str(checkpoint)
+        break
+
+
+_load_project_sensor_checkpoint()
+
 from simulator.engine.simulation import Simulation
+from simulator.perception import SimulatorPerceptionPipeline
 
 app = FastAPI(title="Industrial Evacuation Simulator")
 
 # ── Simulation singleton ──────────────────────────────────────────────────────
 sim = Simulation()
+perception = SimulatorPerceptionPipeline(
+    on_update=sim.apply_perception_update,
+    sensor_provider=sim.virtual_sensor_reading,
+)
+sim.set_perception_provider(perception.get_state)
 
 # ── WebSocket connection manager ──────────────────────────────────────────────
 class ConnectionManager:
@@ -41,12 +78,13 @@ class ConnectionManager:
             return
         msg = json.dumps(data)
         dead = set()
-        for ws in self.active:
+        for ws in list(self.active):
             try:
                 await ws.send_text(msg)
             except Exception:
                 dead.add(ws)
-        self.active -= dead
+        if dead:
+            self.active.difference_update(dead)
 
 manager = ConnectionManager()
 sim.set_broadcast(manager.broadcast)
@@ -55,6 +93,11 @@ sim.set_broadcast(manager.broadcast)
 @app.on_event("startup")
 async def _startup():
     asyncio.create_task(sim.run_loop())
+
+
+@app.on_event("shutdown")
+async def _shutdown():
+    perception.stop_all()
 
 # ── HTTP Endpoints ────────────────────────────────────────────────────────────
 _STATIC = _SIM_DIR / "static"
@@ -81,6 +124,67 @@ async def inject_disaster(payload: dict):
         float(payload.get("intensity", 0.8)),
     )
     return {"ok": ok, "node": payload.get("node_id"), "hazard_type": payload.get("hazard_type")}
+
+
+@app.get("/api/perception/capabilities")
+async def perception_capabilities():
+    return perception.capabilities()
+
+
+@app.get("/api/perception/feeds")
+async def perception_feeds():
+    return perception.get_state()
+
+
+@app.post("/api/perception/feeds")
+async def assign_perception_feed(
+    request: Request,
+    node_id: str,
+):
+    """Assign a recorded hazard/crowd video to a simulated camera node."""
+    if node_id not in sim.node_positions:
+        raise HTTPException(status_code=404, detail="Unknown simulator node")
+
+    original_name = Path(request.headers.get("x-video-filename", "feed.mp4")).name
+    suffix = Path(original_name).suffix.lower()
+    allowed = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+    if suffix not in allowed:
+        raise HTTPException(status_code=415, detail="Use MP4, MOV, AVI, MKV, or WebM video")
+
+    upload_dir = Path(tempfile.gettempdir()) / "lbp_perception_feeds"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    destination = upload_dir / f"{uuid.uuid4().hex}{suffix}"
+    max_bytes = 250 * 1024 * 1024
+    written = 0
+    try:
+        with destination.open("wb") as output:
+            async for chunk in request.stream():
+                written += len(chunk)
+                if written > max_bytes:
+                    raise HTTPException(status_code=413, detail="Video exceeds the 250 MB demo limit")
+                output.write(chunk)
+        if written == 0:
+            raise HTTPException(status_code=400, detail="The uploaded video is empty")
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+
+    feed = perception.assign_video(
+        node_id=node_id,
+        floor=sim.node_floors.get(node_id, 1),
+        capacity=sim.node_capacities.get(node_id, 10),
+        video_path=str(destination),
+        original_name=original_name,
+    )
+    return {"ok": True, "feed": feed, "capabilities": perception.capabilities()}
+
+
+@app.get("/api/perception/feeds/{feed_id}/media")
+async def perception_feed_media(feed_id: str):
+    path = perception.media_path(feed_id)
+    if not path or not path.is_file():
+        raise HTTPException(status_code=404, detail="Feed media not found")
+    return FileResponse(path)
 
 # ── Static files ──────────────────────────────────────────────────────────────
 app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
@@ -115,16 +219,46 @@ async def websocket_endpoint(ws: WebSocket):
                 sim.num_evacuees = int(msg.get("count", 60))
             elif action == "trigger_alarm":
                 sim.trigger_alarm()
+                await ws.send_text(json.dumps({
+                    "type": "ack_alarm",
+                    "ok": True,
+                    "active": sim.alarm_active,
+                    "reason": "Facility alarm activated",
+                }))
             elif action == "reset_alarm":
-                sim.reset_alarm()
+                ok = sim.reset_alarm()
+                await ws.send_text(json.dumps({
+                    "type": "ack_alarm",
+                    "ok": ok,
+                    "active": sim.alarm_active,
+                    "reason": (
+                        "Alarm reset"
+                        if ok
+                        else "Reset blocked while an active hazard is detected"
+                    ),
+                }))
             elif action == "toggle_alarm":
-                sim.toggle_alarm()
+                ok = sim.toggle_alarm()
+                await ws.send_text(json.dumps({
+                    "type": "ack_alarm",
+                    "ok": ok,
+                    "active": sim.alarm_active,
+                    "reason": (
+                        "Facility alarm activated"
+                        if sim.alarm_active and ok
+                        else "Alarm reset"
+                        if ok
+                        else "Reset blocked while an active hazard is detected"
+                    ),
+                }))
             elif action == "set_policy_mode":
                 mode = msg.get("mode", "dijkstra")
-                sim.set_policy_mode(mode)
+                ok = sim.set_policy_mode(mode)
                 await ws.send_text(json.dumps({
                     "type": "ack_policy_mode",
+                    "ok": ok,
                     "mode": sim.policy_mode,
+                    "policy": sim.state_dict().get("policy", {}),
                 }))
             elif action == "inject_disaster":
                 ok = sim.inject_disaster(

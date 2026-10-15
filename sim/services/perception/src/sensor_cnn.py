@@ -1,5 +1,7 @@
 import numpy as np
-from typing import Tuple, Dict, List
+import os
+from pathlib import Path
+from typing import Tuple, Dict, List, Optional
 
 try:
     import torch
@@ -32,14 +34,53 @@ if HAS_TORCH:
             return x
 
 class SensorAnomalyDetector:
-    def __init__(self, window_size: int = 50, use_nn: bool = True):
+    """Temporal sensor detector with an explicit trained-model requirement.
+
+    A randomly initialized CNN is not a valid anomaly detector.  Neural
+    inference is enabled only after a checkpoint has been loaded; otherwise the
+    deterministic engineering-threshold fallback remains active and is exposed
+    through ``backend_status``.
+    """
+
+    def __init__(
+        self,
+        window_size: int = 50,
+        use_nn: bool = True,
+        checkpoint_path: Optional[str] = None,
+    ):
         self.window_size = window_size
-        self.use_nn = use_nn and HAS_TORCH
+        requested_checkpoint = checkpoint_path or os.environ.get("SENSOR_CNN_CHECKPOINT")
+        self.checkpoint_path = str(requested_checkpoint) if requested_checkpoint else None
+        self.load_error: Optional[str] = None
+        self.use_nn = False
         self.buffers: Dict[str, List[Tuple[float, float, float]]] = {} # node_id -> list of (gas, temp, hum)
-        
-        if self.use_nn:
+
+        if use_nn and not HAS_TORCH:
+            self.load_error = "PyTorch is not installed"
+        elif use_nn and not self.checkpoint_path:
+            self.load_error = "No trained SENSOR_CNN_CHECKPOINT configured"
+        elif use_nn and self.checkpoint_path and not Path(self.checkpoint_path).is_file():
+            self.load_error = f"Sensor CNN checkpoint not found: {self.checkpoint_path}"
+        elif use_nn:
             self.model = SensorCNN(window_size)
-            self.model.eval()
+            try:
+                payload = torch.load(self.checkpoint_path, map_location="cpu", weights_only=False)
+                state_dict = payload.get("model_state_dict", payload) if isinstance(payload, dict) else payload
+                self.model.load_state_dict(state_dict)
+                self.model.eval()
+                self.use_nn = True
+            except Exception as exc:
+                self.load_error = f"Sensor CNN checkpoint rejected: {exc}"
+
+    @property
+    def backend_status(self) -> dict:
+        return {
+            "name": "1D CNN" if self.use_nn else "Engineering threshold fallback",
+            "available": self.use_nn,
+            "checkpoint": self.checkpoint_path if self.use_nn else None,
+            "load_error": self.load_error,
+            "window_size": self.window_size,
+        }
             
     def add_reading(self, node_id: str, gas: float, temperature: float, humidity: float):
         if node_id not in self.buffers:
@@ -56,7 +97,11 @@ class SensorAnomalyDetector:
         
         if self.use_nn and len(data) == self.window_size:
             # Prepare tensor (batch, channels, length)
-            tensor_data = torch.tensor(data, dtype=torch.float32).T.unsqueeze(0)
+            normalized = np.asarray(data, dtype=np.float32).copy()
+            normalized[:, 0] = np.clip(normalized[:, 0] / 200.0, 0.0, 2.0)
+            normalized[:, 1] = np.clip((normalized[:, 1] - 20.0) / 80.0, -0.25, 2.0)
+            normalized[:, 2] = np.clip(normalized[:, 2] / 100.0, 0.0, 1.0)
+            tensor_data = torch.tensor(normalized, dtype=torch.float32).T.unsqueeze(0)
             with torch.no_grad():
                 pred = self.model(tensor_data).item()
             return pred > 0.5, pred

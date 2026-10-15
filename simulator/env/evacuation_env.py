@@ -12,27 +12,27 @@ from typing import Dict, List, Tuple, Optional, Any
 import numpy as np
 import networkx as nx
 import gymnasium
-from gymnasium.spaces import Box, MultiDiscrete
+from gymnasium.spaces import Box
 from pettingzoo import ParallelEnv
 
 from simulator.engine.simulation import Simulation
 from simulator.engine.pedestrian import PedestrianState
 from simulator.engine.hazard_model import HazardType
+from core.communication.hazard_packet import HazardPacket32, unpack_hazard_packet
+from core.graph.directions import MAX_DIRECTIONS
 
 
 class IndustrialEvacuationEnv(ParallelEnv):
     """
     PettingZoo ParallelEnv for 36-node edge router network.
     Observation space: local sensor features + 4-byte gossip + incident corridor states.
-    Action space: MultiDiscrete([4] * max_corridors) for incident directional signage:
-      0: NORMAL (no active direction)
-      1: CAUTION (amber detour)
-      2: BLOCKED (red X safety blockade)
-      3: GREEN ARROW (the policy's direct directional instruction)
+    Action space: one discrete primary corridor choice per router, plus standby.
+    The environment translates that choice into physical NORMAL / CAUTION /
+    BLOCKED / GREEN ARROW signboard states for each incident corridor.
     """
     metadata = {"name": "industrial_evacuation_v1", "render_modes": ["human"]}
 
-    MAX_CORRIDORS: int = 6
+    MAX_CORRIDORS: int = MAX_DIRECTIONS
     DECISION_DT: float = 2.5  # Decision interval: policy steps every 2.5 sim-seconds (25 SFM ticks)
     MAX_SIM_TIME: float = 120.0  # Max episode length in simulated seconds
 
@@ -64,6 +64,7 @@ class IndustrialEvacuationEnv(ParallelEnv):
                 self.agent_neighbors[s].append(t)
             if s not in self.agent_neighbors[t]:
                 self.agent_neighbors[t].append(s)
+        self.directional_neighbors = self.sim.directional_neighbors
 
         # Graph Edge Index for PyTorch GNN (2, E)
         edges = []
@@ -89,7 +90,8 @@ class IndustrialEvacuationEnv(ParallelEnv):
         }
         self.action_space = gymnasium.spaces.Discrete(self.MAX_CORRIDORS + 1)
 
-        # Normalized Team Reward Weights (bounded episode returns in [-20, +15])
+        # Scale-invariant team reward weights. Individual transition rewards are
+        # normalized by crowd size; full discounted returns are not hard-bounded.
         self.weights = reward_weights or {
             "evac": 10.0,      # Reward on confirmed egress completion
             "cas": 20.0,       # High penalty on casualty incidence / trapped occupants
@@ -109,20 +111,46 @@ class IndustrialEvacuationEnv(ParallelEnv):
         self.prev_actions: Dict[str, int] = {nid: self.MAX_CORRIDORS for nid in self.agents}
         self.last_hazards: Dict[str, float] = {nid: 0.0 for nid in self.agents}
         self.last_crowds: Dict[str, float] = {nid: 0.0 for nid in self.agents}
+        self.observed_hazard_deltas: Dict[str, float] = {nid: 0.0 for nid in self.agents}
+        self.observed_crowd_deltas: Dict[str, float] = {nid: 0.0 for nid in self.agents}
+        self.received_packets: Dict[str, HazardPacket32] = {}
+
+    def _packet_snapshot(self, node_counts: Dict[str, int]) -> Dict[str, HazardPacket32]:
+        """Serialize and decode one 32-bit broadcast per node.
+
+        The round trip intentionally quantizes remote hazard and crowd values so
+        training observes exactly what an adjacent controller can receive over
+        the constrained link, rather than simulator-only floating-point truth.
+        """
+        packets: Dict[str, HazardPacket32] = {}
+        for node_id in self.agents:
+            capacity = max(1, self.sim.node_capacities.get(node_id, 10))
+            density = min(2.0, node_counts.get(node_id, 0) / float(capacity))
+            hazard = self.sim.hazard.levels.get(node_id, 0.0)
+            hazard_type = self.sim.hazard.types.get(node_id)
+            packet = self.sim.make_hazard_packet(
+                node_id=node_id,
+                hazard=hazard,
+                crowd_density=density,
+                hazard_type=hazard_type.value if hazard_type else "NONE",
+            )
+            packets[node_id] = unpack_hazard_packet(packet.to_bytes())
+        self.received_packets = packets
+        return packets
 
     def get_action_mask(self, agent_id: str) -> np.ndarray:
         """Returns boolean mask of length MAX_CORRIDORS + 1 (True = valid corridor choice or standby)."""
         mask = np.zeros(self.MAX_CORRIDORS + 1, dtype=bool)
-        nbrs = self.agent_neighbors.get(agent_id, [])
+        direction_slots = self.directional_neighbors.get(agent_id, ())
         local_h = self.sim.hazard.levels.get(agent_id, 0.0)
         curr_dist = self.exit_dists.get(agent_id, 50.0)
-        num_valid = min(len(nbrs), self.MAX_CORRIDORS)
-
         # Check if at least one forward corridor (toward exit) is safe and passable
         has_safe_forward = False
-        for k in range(num_valid):
-            nbr = nbrs[k]
-            nbr_h = self.sim.hazard.levels.get(nbr, 0.0)
+        for k, nbr in enumerate(direction_slots):
+            if nbr is None:
+                continue
+            packet = self.received_packets.get(nbr)
+            nbr_h = packet.hazard if packet else self.sim.hazard.levels.get(nbr, 0.0)
             nbr_dist = self.exit_dists.get(nbr, 50.0)
             is_hoist = "hoist" in agent_id and "hoist" in nbr
             is_dead_end = len(self.agent_neighbors.get(nbr, [])) <= 1 and nbr not in self.sim.exits
@@ -131,9 +159,11 @@ class IndustrialEvacuationEnv(ParallelEnv):
                     has_safe_forward = True
                     break
 
-        for k in range(num_valid):
-            nbr = nbrs[k]
-            nbr_h = self.sim.hazard.levels.get(nbr, 0.0)
+        for k, nbr in enumerate(direction_slots):
+            if nbr is None:
+                continue
+            packet = self.received_packets.get(nbr)
+            nbr_h = packet.hazard if packet else self.sim.hazard.levels.get(nbr, 0.0)
             nbr_dist = self.exit_dists.get(nbr, 50.0)
             is_hoist = "hoist" in agent_id and "hoist" in nbr
             is_dead_end = len(self.agent_neighbors.get(nbr, [])) <= 1 and nbr not in self.sim.exits
@@ -148,10 +178,12 @@ class IndustrialEvacuationEnv(ParallelEnv):
             mask[k] = True
 
         # Safety fallback: ensure at least one physical corridor is available
-        if not np.any(mask[:num_valid]):
-            for k in range(num_valid):
-                nbr = nbrs[k]
-                nbr_h = self.sim.hazard.levels.get(nbr, 0.0)
+        if not np.any(mask[:self.MAX_CORRIDORS]):
+            for k, nbr in enumerate(direction_slots):
+                if nbr is None:
+                    continue
+                packet = self.received_packets.get(nbr)
+                nbr_h = packet.hazard if packet else self.sim.hazard.levels.get(nbr, 0.0)
                 is_hoist = "hoist" in agent_id and "hoist" in nbr
                 is_dead_end = len(self.agent_neighbors.get(nbr, [])) <= 1 and nbr not in self.sim.exits
                 if local_h < 0.80 and nbr_h < 0.80 and not is_hoist and not is_dead_end:
@@ -214,10 +246,16 @@ class IndustrialEvacuationEnv(ParallelEnv):
         self.prev_actions = {a: self.MAX_CORRIDORS for a in self.agents}
         self.last_hazards = {nid: self.sim.hazard.levels.get(nid, 0.0) for nid in self.agents}
         self.last_crowds = {nid: 0.0 for nid in self.agents}
+        self.observed_hazard_deltas = {nid: 0.0 for nid in self.agents}
+        self.observed_crowd_deltas = {nid: 0.0 for nid in self.agents}
 
         obs = self._get_observations()
         infos = {agent: {"action_mask": self.get_action_mask(agent)} for agent in self.agents}
         return obs, infos
+
+    def get_observations(self) -> Dict[str, np.ndarray]:
+        """Returns a fresh all-agent observation after external simulator changes."""
+        return self._get_observations()
 
     def _get_observations(self) -> Dict[str, np.ndarray]:
         """Constructs observation vector for each agent."""
@@ -227,6 +265,8 @@ class IndustrialEvacuationEnv(ParallelEnv):
             if ped.state not in (PedestrianState.EVACUATED, PedestrianState.CASUALTY):
                 if ped.current_node in node_counts:
                     node_counts[ped.current_node] += 1
+
+        packets = self._packet_snapshot(node_counts)
 
         obs_dict = {}
         for agent in self.agents:
@@ -239,9 +279,11 @@ class IndustrialEvacuationEnv(ParallelEnv):
             is_exit = 1.0 if agent in self.sim.exits else 0.0
             cap_norm = min(1.0, cap / 50.0)
 
-            # 4-byte sparse gossip differentials: Delta H, Delta rho
+            # Local temporal deltas complement the adjacent nodes' 32-bit PDUs.
             delta_h = h - self.last_hazards.get(agent, 0.0)
             delta_rho = rho - self.last_crowds.get(agent, 0.0)
+            self.observed_hazard_deltas[agent] = delta_h
+            self.observed_crowd_deltas[agent] = delta_rho
             time_ratio = min(1.0, self.sim.t / max(1.0, self.max_sim_time))
             alarm_flag = 1.0 if self.sim.alarm_active else 0.0
             exit_dist_norm = min(1.0, self.exit_dists.get(agent, 50.0) / 100.0)
@@ -253,14 +295,13 @@ class IndustrialEvacuationEnv(ParallelEnv):
             ]
 
             # Neighbor features for up to MAX_CORRIDORS
-            nbrs = self.agent_neighbors.get(agent, [])
+            direction_slots = self.directional_neighbors.get(agent, ())
             for k in range(self.MAX_CORRIDORS):
-                if k < len(nbrs):
-                    nbr = nbrs[k]
-                    n_h = self.sim.hazard.levels.get(nbr, 0.0)
-                    n_pop = node_counts.get(nbr, 0)
-                    n_cap = max(1, self.sim.node_capacities.get(nbr, 10))
-                    n_rho = min(2.0, n_pop / float(n_cap))
+                nbr = direction_slots[k] if k < len(direction_slots) else None
+                if nbr is not None:
+                    packet = packets[nbr]
+                    n_h = packet.hazard
+                    n_rho = packet.crowd_density
                     # Find distance and width
                     dist, width = 10.0, 2.0
                     for s, t, d, w in self.sim.edge_list:
@@ -291,7 +332,7 @@ class IndustrialEvacuationEnv(ParallelEnv):
     ]:
         """
         Executes one policy step:
-          1. Translates single primary exit arrow actions into physical 6-corridor signboard states.
+          1. Translates one of eight directional choices into physical signboard states.
           2. Runs continuous SFM physics sub-steps (DECISION_DT seconds).
           3. Evaluates cooperative multi-objective team reward with dense progress shaping.
         """
@@ -299,28 +340,26 @@ class IndustrialEvacuationEnv(ParallelEnv):
         safety_interventions = 0
         safe_actions: Dict[str, np.ndarray] = {}
 
-        # Count active pedestrians per node before step logic to gauge crowd pressure
-        node_occupancies = {}
-        for p in self.sim.agents:
-            if p.state not in (PedestrianState.EVACUATED, PedestrianState.CASUALTY):
-                node_occupancies[p.current_node] = node_occupancies.get(p.current_node, 0) + 1
-
         for agent, act in actions.items():
             act_idx = int(np.asarray(act).item()) if isinstance(act, (np.ndarray, list)) else int(act)
             prev_act = self.prev_actions.get(agent, self.MAX_CORRIDORS)
-            nbrs = self.agent_neighbors.get(agent, [])
+            direction_slots = self.directional_neighbors.get(agent, ())
             local_hazard = self.sim.hazard.levels.get(agent, 0.0)
-            cap = max(1, self.sim.node_capacities.get(agent, 10))
-            current_rho = min(2.0, node_occupancies.get(agent, 0) / float(cap))
-            delta_h = abs(local_hazard - self.last_hazards.get(agent, 0.0))
-            delta_rho = abs(current_rho - self.last_crowds.get(agent, 0.0))
+            # These are the deltas the policy actually observed. Comparing against
+            # last_hazards/last_crowds here always produced zero because observation
+            # construction had already advanced those snapshots.
+            delta_h = abs(self.observed_hazard_deltas.get(agent, 0.0))
+            delta_rho = abs(self.observed_crowd_deltas.get(agent, 0.0))
 
-            # Build physical 6-corridor action array for simulation engine:
+            # Build physical eight-direction action array for simulation engine:
             # 0: NORMAL, 1: CAUTION, 2: BLOCKED, 3: GREEN ARROW
             action_vec = np.zeros(self.MAX_CORRIDORS, dtype=np.int64)
 
-            for k, nbr in enumerate(nbrs[:self.MAX_CORRIDORS]):
-                neighbor_hazard = self.sim.hazard.levels.get(nbr, 0.0)
+            for k, nbr in enumerate(direction_slots):
+                if nbr is None:
+                    continue
+                packet = self.received_packets.get(nbr)
+                neighbor_hazard = packet.hazard if packet else self.sim.hazard.levels.get(nbr, 0.0)
                 if local_hazard >= 0.80 or neighbor_hazard >= 0.80:
                     action_vec[k] = 2  # BLOCKED (Red X)
                     if k == act_idx:
@@ -423,10 +462,10 @@ class IndustrialEvacuationEnv(ParallelEnv):
         for agent, act_vec in safe_actions.items():
             if agent in self.sim.exits:
                 continue
-            nbrs = self.agent_neighbors.get(agent, [])
+            direction_slots = self.directional_neighbors.get(agent, ())
             for k, code in enumerate(act_vec):
-                if code == 3 and k < len(nbrs):  # GREEN ARROW
-                    nbr = nbrs[k]
+                if code == 3 and k < len(direction_slots) and direction_slots[k] is not None:
+                    nbr = direction_slots[k]
                     if self.sim.hazard.levels.get(agent, 0.0) < 0.80 and self.sim.hazard.levels.get(nbr, 0.0) < 0.80:
                         G_arrow.add_edge(agent, nbr)
 
@@ -475,6 +514,7 @@ class IndustrialEvacuationEnv(ParallelEnv):
                 "sim_time": self.sim.t,
                 "progress_reward": r_progress,
                 "safety_interventions": safety_interventions,
+                "flipping_penalty": flipping_penalty,
                 "cycle_penalty": cycle_penalty,
                 "unreach_penalty": unreach_penalty,
             }

@@ -27,6 +27,7 @@ from envs.hazard_simulator import HazardSimulator
 from envs.comm_channel import DegradedCommChannel
 from sim.services.environment.src.floorplan_generator import generate_industrial_plant
 from core.graph.types import NodeType
+from core.graph.directions import MAX_DIRECTIONS, assign_direction_slots
 
 
 class PedestrianState:
@@ -59,7 +60,7 @@ class EvacuationParallelEnv(ParallelEnv):
         num_pedestrians: int = 250,
         max_steps: int = 180,
         dt: float = 1.0,
-        max_corridors: int = 6,
+        max_corridors: int = MAX_DIRECTIONS,
         comm_radius: float = 18.0,
         packet_loss_rate: float = 0.15,
         render_mode: Optional[str] = None,
@@ -190,6 +191,16 @@ class EvacuationParallelEnv(ParallelEnv):
         self.neighbors: Dict[int, List[int]] = {
             i: sorted(list(self.G.neighbors(i))) for i in range(self.num_nodes)
         }
+        floors = {index: int(position[2]) for index, position in self.node_positions.items()}
+        self.directional_neighbors = {
+            index: assign_direction_slots(
+                index,
+                neighbors,
+                self.node_positions,
+                floors,
+            )
+            for index, neighbors in self.neighbors.items()
+        }
 
     @functools.lru_cache(maxsize=None)
     def observation_space(self, agent: str):
@@ -270,7 +281,7 @@ class EvacuationParallelEnv(ParallelEnv):
 
     def _get_observation(self, agent: str, all_node_feats: np.ndarray) -> np.ndarray:
         node_idx = int(agent.split('_')[1])
-        nbrs = self.neighbors[node_idx]
+        direction_slots = self.directional_neighbors[node_idx]
 
         local_node_feats = np.zeros((1 + self.max_corridors, 5), dtype=np.float32)
         local_node_feats[0] = all_node_feats[node_idx]
@@ -278,7 +289,9 @@ class EvacuationParallelEnv(ParallelEnv):
         local_edge_feats = np.zeros((self.max_corridors, 3), dtype=np.float32)
         action_mask = np.zeros(self.max_corridors, dtype=np.float32)
 
-        for slot, nbr in enumerate(nbrs[:self.max_corridors]):
+        for slot, nbr in enumerate(direction_slots[:self.max_corridors]):
+            if nbr is None:
+                continue
             local_node_feats[1 + slot] = all_node_feats[nbr]
             edge_data = self.edge_info.get((node_idx, nbr), {'length': 10.0, 'width': 2.0, 'throughput': 10.0})
             active_peds = sum(1 for p in self.pedestrians if p.current_node == node_idx and p.target_node == nbr)
@@ -323,9 +336,9 @@ class EvacuationParallelEnv(ParallelEnv):
         router_target: Dict[int, int] = {}
         for agent, action_idx in actions.items():
             node_idx = int(agent.split('_')[1])
-            nbrs = self.neighbors[node_idx]
-            if 0 <= action_idx < len(nbrs):
-                router_target[node_idx] = nbrs[action_idx]
+            direction_slots = self.directional_neighbors[node_idx]
+            if 0 <= action_idx < len(direction_slots) and direction_slots[action_idx] is not None:
+                router_target[node_idx] = direction_slots[action_idx]
 
         G_dyn = nx.DiGraph()
         G_static = nx.DiGraph()

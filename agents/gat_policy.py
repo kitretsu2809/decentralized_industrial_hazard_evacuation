@@ -16,6 +16,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, List, Optional, Tuple, Union
+from core.graph.directions import MAX_DIRECTIONS
 
 
 class EdgeGATConv(nn.Module):
@@ -130,7 +131,7 @@ class PermutationInvariantGATPolicy(nn.Module):
         node_dim: int = 5,
         edge_dim: int = 3,
         hidden_dim: int = 64,
-        max_corridors: int = 6,
+        max_corridors: int = MAX_DIRECTIONS,
         heads: int = 4
     ):
         super().__init__()

@@ -1,0 +1,7 @@
+-r requirements.txt
+
+# Optional simulator video-perception demonstration.
+# Install in the project environment; do not use these packages on constrained
+# physical nodes unless the deployment image has been validated separately.
+opencv-python-headless>=4.10
+ultralytics>=8.3

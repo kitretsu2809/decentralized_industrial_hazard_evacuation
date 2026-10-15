@@ -1,9 +1,17 @@
 import numpy as np
-import cv2
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Tuple, Optional, Callable
 
 from core.hazard.threat_types import ThreatType, classify_yolo_detection
+
+try:
+    import cv2
+    HAS_CV2 = True
+except ImportError:
+    cv2 = None
+    HAS_CV2 = False
 
 try:
     from ultralytics import YOLO
@@ -19,16 +27,32 @@ class Detection:
     threat_type: Optional[ThreatType]
 
 class ThreatDetector:
-    def __init__(self, model_name: str = 'yolov8n.pt', confidence_threshold: float = 0.5):
+    def __init__(self, model_name: Optional[str] = None, confidence_threshold: float = 0.5):
         self.confidence_threshold = confidence_threshold
         self.model = None
-        if HAS_YOLO:
+        self.model_name = model_name or os.environ.get("YOLO_MODEL_PATH")
+        self.load_error = None
+        if HAS_YOLO and self.model_name and Path(self.model_name).is_file():
             try:
-                self.model = YOLO(model_name)
+                self.model = YOLO(self.model_name)
             except Exception as e:
-                print(f"Failed to load YOLO model {model_name}: {e}")
+                self.load_error = f"Failed to load YOLO model {self.model_name}: {e}"
+        elif not HAS_YOLO:
+            self.load_error = "Ultralytics is not installed"
+        elif self.model_name:
+            self.load_error = f"Local YOLO checkpoint not found: {self.model_name}"
         else:
-            print("ultralytics not installed, YOLO detection disabled.")
+            self.load_error = "No local YOLO_MODEL_PATH configured"
+
+    @property
+    def backend_status(self) -> dict:
+        return {
+            "name": "Ultralytics YOLO",
+            "available": self.is_available(),
+            "opencv_available": HAS_CV2,
+            "model": self.model_name if self.is_available() else None,
+            "load_error": self.load_error,
+        }
 
     def is_available(self) -> bool:
         return self.model is not None
@@ -66,6 +90,8 @@ class ThreatDetector:
         return [d for d in detections if d.threat_type is not None]
         
     def detect_video(self, video_path: str, callback: Callable[[int, List[Detection]], None], frame_skip: int = 1):
+        if not HAS_CV2:
+            raise RuntimeError("OpenCV is required for video decoding")
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             print(f"Could not open video {video_path}")
@@ -87,6 +113,8 @@ class ThreatDetector:
 
 def detect_fire_heuristic(frame: np.ndarray) -> Tuple[bool, float]:
     """Uses color analysis (orange-red pixels in HSV space) to detect fire."""
+    if not HAS_CV2:
+        return False, 0.0
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     
     # Define range for orange-red color

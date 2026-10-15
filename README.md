@@ -218,10 +218,14 @@ To resume an existing checkpoint and continue training:
 ```bash
 PYTHONPATH=. python simulator/training/train_mappo.py \
     --device cuda \
-    --episodes 40 \
+    --episodes 100 \
     --resume checkpoints/directional/best_policy.pt \
     --save-dir checkpoints/directional
 ```
+
+`--episodes` is the final episode number, not the number of extra episodes. For
+example, resuming an episode-40 checkpoint with `--episodes 100` trains episodes
+41 through 100.
 
 ---
 
@@ -241,29 +245,28 @@ You can run the entire 100-episode training process on Kaggle's free GPUs withou
    !git clone -b marl-v2-training https://github.com/kitretsu2809/decentralized_industrial_hazard_evacuation.git
    %cd decentralized_industrial_hazard_evacuation
 
-   # 2. Install dependencies
-   !pip install -q gymnasium pettingzoo onnx
+   # 2. Install only the training dependencies not already in Kaggle
+   !pip install -q gymnasium pettingzoo networkx
 
-   # 3. Train on GPU for 100 episodes
-   !PYTHONPATH=. python simulator/training/train_mappo.py \
-       --device cuda \
-       --episodes 100 \
-       --save-dir /kaggle/working/checkpoints \
-       --min-evacuees 30 \
-       --max-evacuees 400 \
-       --curriculum \
-       --eval
+   # 3. Verify that Kaggle actually attached a GPU
+   import torch
+   print(torch.cuda.get_device_name(0))
+   assert torch.cuda.is_available()
+
+   # 4. Train, benchmark, validate the 8-direction interface, and package it
+   !python -u scripts/kaggle_train.py --episodes 100
    ```
 
 3. **Download Model Checkpoint**:
-   - In the right-hand **Data / Output** panel on Kaggle, locate `/kaggle/working/checkpoints/best_policy.pt`.
-   - Click the three dots `...` next to `best_policy.pt` and select **Download**.
+   - Save a Kaggle notebook version so `/kaggle/working` becomes downloadable output.
+   - Download `/kaggle/working/lbp-eight-direction-model.zip` from the **Output** panel.
 
 4. **Deploy Trained Weights Locally**:
    - Place the downloaded file into your local project:
    ```bash
-   cp ~/Downloads/best_policy.pt checkpoints/directional/best_policy.pt
-   cp ~/Downloads/best_policy.pt data/models/st_tba_gat_latest.pt
+   unzip -o ~/Downloads/lbp-eight-direction-model.zip -d /tmp/lbp-model-import
+   cp /tmp/lbp-model-import/best_policy.pt checkpoints/directional/best_policy.pt
+   cp /tmp/lbp-model-import/st_tba_gat_latest.pt checkpoints/directional/st_tba_gat_latest.pt
    ```
    - If the digital twin is open (`http://127.0.0.1:8080/`), toggle routing mode to `AI (ST-TBA-GAT)`. The simulator will immediately execute inference using your newly trained Kaggle weights!
 
@@ -340,7 +343,7 @@ Tests verified:
 | **Backend & WebSockets** | [FastAPI](https://fastapi.tiangolo.com/), [Uvicorn](https://www.uvicorn.org/) | Real-time 10 Hz telemetry streaming |
 | **Digital Twin GUI** | HTML5 Canvas, Vanilla ES6 JavaScript | Interactive multi-floor canvas with animated flow arrows |
 | **Remote Access** | [Cloudflare Tunnels](https://developers.cloudflare.com/pages/how-to/preview-urls/) | Zero-cost public HTTPS/WSS tunnel |
-| **RF Protocol Model** | IEEE 802.15.4 (ZigBee / WirelessHART) | 4-byte sparse delta gossip simulation |
+| **RF Protocol Model** | IEEE 802.15.4 (ZigBee / WirelessHART) | 32-bit hazard PDU with an 8-direction safety mask |
 
 ---
 

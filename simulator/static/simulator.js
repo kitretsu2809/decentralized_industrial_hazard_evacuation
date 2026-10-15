@@ -11,6 +11,10 @@ let lastState    = null;
 let prevState    = null;
 let lastStateMs  = 0;       // wall-clock when lastState arrived
 let stateIntervalMs = 100;  // running estimate of state update interval
+let previousAlarmState = null;
+let previousRunState = null;
+let previousPolicyMode = null;
+let perceptionCapabilities = null;
 
 let currentFloor = 1;
 let clickedNode  = null;
@@ -43,7 +47,6 @@ function resizeCanvas() {
   canvas.style.width  = wrap.clientWidth  + "px";
   canvas.style.height = wrap.clientHeight + "px";
   ctx.scale(devicePixelRatio, devicePixelRatio);
-  if (building) fitBuilding(false);
 }
 const logicalW = () => canvas.width  / devicePixelRatio;
 const logicalH = () => canvas.height / devicePixelRatio;
@@ -161,7 +164,8 @@ function connectWS() {
   window.simSocket = ws;
   ws.onopen = () => {
     setConn(true);
-    send({action: "set_policy_mode", mode: signPolicy === "marl" ? "marl" : "dijkstra"});
+    appendEvent("Live telemetry connected");
+    send({action: "set_policy_mode", mode: signPolicy});
   };
   ws.onclose = () => {
     if (window.simSocket === ws) window.simSocket = null;
@@ -174,21 +178,48 @@ function connectWS() {
 
 function setConn(live) {
   document.getElementById("conn-dot").classList.toggle("live", live);
-  document.getElementById("conn-text").textContent = live ? "Live" : "Reconnecting…";
+  document.getElementById("conn-text").textContent = live ? "Live link" : "Reconnecting";
+  document.getElementById("connection-badge").classList.toggle("offline", !live);
+  ["btn-play", "btn-pause", "btn-reset", "btn-alarm", "btn-inject", "btn-camera-upload", "sign-policy-select"]
+    .forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.disabled = !live;
+    });
 }
 
 function handleMessage(msg) {
   if (msg.type === "building") {
     building = msg.data;
+    document.getElementById("facility-name").textContent = building.name || "Industrial facility";
+    buildFloorTabs();
+    updateInfrastructureSummary();
     fitBuilding(true);
     populateNodeSelect();
     return;
   }
   if (msg.type === "ack_inject") {
     const ack = document.getElementById("inject-ack");
-    ack.textContent = msg.ok ? `✓ ${msg.hazard_type.replace("_"," ")} at ${msg.node}` : "✗ Failed";
-    ack.style.color = msg.ok ? "var(--green)" : "var(--red)";
+    ack.textContent = msg.ok ? `Hazard accepted · ${friendlyLabel(msg.node)}` : "Hazard injection rejected";
+    ack.className = `inject-ack ${msg.ok ? "success" : "error"}`;
+    if (msg.ok) appendEvent(`${friendlyLabel(msg.hazard_type)} injected at ${friendlyLabel(msg.node)}`);
     setTimeout(() => ack.textContent = "", 5000);
+    return;
+  }
+  if (msg.type === "ack_alarm") {
+    showCommandFeedback(msg.reason, msg.ok);
+    appendEvent(msg.reason);
+    return;
+  }
+  if (msg.type === "ack_policy_mode") {
+    signPolicy = msg.mode;
+    const select = document.getElementById("sign-policy-select");
+    if (select) select.value = msg.mode;
+    updatePolicyStatus(msg.policy || {mode: msg.mode, ready: msg.ok});
+    showCommandFeedback(
+      msg.ok ? `${policyLabel(msg.mode)} routing engaged` : "AI policy unavailable; safe-path baseline retained",
+      msg.ok
+    );
+    appendEvent(msg.ok ? `${policyLabel(msg.mode)} routing engaged` : "AI request rejected; baseline retained");
     return;
   }
   if (msg.pedestrians !== undefined) {
@@ -199,34 +230,48 @@ function handleMessage(msg) {
     lastStateMs = now;
     prevState   = lastState;
     lastState   = msg;
-    updateMetrics(msg.metrics);
+    updateMetrics(msg.metrics, msg);
+    updateOperationalState(msg);
+    updatePolicyStatus(msg.policy || {mode: msg.policy_mode});
+    updateIncidentList(msg.hazards || {});
+    updatePerceptionPanel(msg.perception || {});
     refreshLiveTooltip();
     updateSpeedDisplay(msg.speed);
     if (msg.alarm_active !== undefined) {
-      updateAlarmStatus(msg.alarm_active);
+      updateAlarmStatus(msg.alarm_active, msg.hazards || {});
     }
   }
 }
 
-function updateAlarmStatus(alarmActive) {
+function updateAlarmStatus(alarmActive, hazards = {}) {
   const pill = document.getElementById("facility-status");
   const txt  = document.getElementById("facility-status-text");
   const btn  = document.getElementById("btn-alarm");
   if (!pill) return;
 
+  const hazardActive = Object.values(hazards).some(h => (h.level || 0) >= 0.05);
   if (alarmActive) {
     pill.className = "status-pill alarm";
-    if (txt) txt.textContent = "🚨 EMERGENCY EVACUATION ALARM ACTIVE";
+    if (txt) txt.textContent = "EVACUATION ALARM ACTIVE";
     if (btn) {
-      btn.className = "btn-alarm active";
-      btn.textContent = "⏹ CANCEL / RESET ALARM";
+      btn.className = `alarm-button active${hazardActive ? " locked" : ""}`;
+      btn.innerHTML = hazardActive
+        ? '<span class="alarm-symbol">!</span><span><strong>Alarm locked active</strong><small>Reset the exercise after hazard clearance</small></span>'
+        : '<span class="alarm-symbol">!</span><span><strong>Stand down drill alarm</strong><small>No active hazard detected</small></span>';
+    }
+  } else if (hazardActive) {
+    pill.className = "status-pill warning";
+    if (txt) txt.textContent = "HAZARD DETECTED · ALARM INACTIVE";
+    if (btn) {
+      btn.className = "alarm-button";
+      btn.innerHTML = '<span class="alarm-symbol">!</span><span><strong>Declare evacuation now</strong><small>Active hazard requires facility alarm</small></span>';
     }
   } else {
     pill.className = "status-pill normal";
-    if (txt) txt.textContent = "FACILITY: NORMAL OPERATION";
+    if (txt) txt.textContent = "NORMAL OPERATIONS";
     if (btn) {
-      btn.className = "btn-alarm";
-      btn.textContent = "🚨 SOUND EMERGENCY ALARM";
+      btn.className = "alarm-button";
+      btn.innerHTML = '<span class="alarm-symbol">!</span><span><strong>Declare evacuation</strong><small>Initiate facility-wide alarm</small></span>';
     }
   }
 }
@@ -381,9 +426,7 @@ function drawCorridors(edges, hazards) {
 }
 
 // ── Dynamic IoT Edge Router Signboards ───────────────────────────────────────
-let signPolicy = "marl"; // "marl", "dijkstra", "random"
-let randomExplorationCache = {};
-let lastMarlUpdate = 0;
+let signPolicy = "dijkstra"; // mirrors the backend's fail-safe default
 let hoverSign = null;       // Active hovered signboard { u, v, px, py, signW, signH, action, hazard }
 let renderedSigns = [];     // Screen cache for hit-testing and interactive inspection
 
@@ -391,20 +434,6 @@ function drawSignboards(signboards, floorNodes) {
   if (!building) return;
   const now = performance.now();
   renderedSigns = [];
-
-  // If in random mode, update simulated exploration outputs
-  if (signPolicy === "random" && now - lastMarlUpdate > 1800) {
-    lastMarlUpdate = now;
-    floorNodes.forEach(u => {
-      const edges = building.edges.filter(e => e.source === u.id || e.target === u.id);
-      randomExplorationCache[u.id] = {};
-      edges.forEach(e => {
-        const vId = e.source === u.id ? e.target : e.source;
-        const acts = ["ARROW", "BLOCKED", "CAUTION", "ARROW"];
-        randomExplorationCache[u.id][vId] = acts[Math.floor(Math.random() * acts.length)];
-      });
-    });
-  }
 
   floorNodes.forEach(u => {
     const signs = (signboards && signboards[u.id]) ? signboards[u.id] : [];
@@ -440,10 +469,7 @@ function drawSignboards(signboards, floorNodes) {
       const py = sy + uy * offsetPx;
 
       // Determine active action
-      let act = sign.action;
-      if (signPolicy === "random" && randomExplorationCache[u.id] && randomExplorationCache[u.id][sign.target]) {
-        act = randomExplorationCache[u.id][sign.target];
-      }
+      const act = sign.action;
 
       // Dimensions (prominent and readable)
       const signW = Math.max(22, Math.min(36, 5.5 * viewScale));
@@ -712,8 +738,6 @@ function drawAgents(agents, prevAgents, alpha) {
   if (prevAgents) prevAgents.forEach(a => prevMap[a.id] = a);
 
   agents.filter(a => a.floor === currentFloor).forEach(a => {
-    if (a.state === "casualty") return;
-
     // Smooth interpolation based on state interval
     let rx = a.x, ry = a.y;
     const p = prevMap[a.id];
@@ -725,6 +749,23 @@ function drawAgents(agents, prevAgents, alpha) {
 
     const [cx, cy] = toScreen(rx, ry);
     const r = Math.max(3, 4.0 * Math.min(1.4, viewScale / 3.0));
+
+    // Keep casualties visible at their last known position for responder awareness.
+    if (a.state === "casualty") {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, r + 3, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(255, 99, 95, 0.18)";
+      ctx.fill();
+      ctx.strokeStyle = "#ff635f";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(cx - r, cy - r); ctx.lineTo(cx + r, cy + r);
+      ctx.moveTo(cx + r, cy - r); ctx.lineTo(cx - r, cy + r);
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
 
     // Normal state: subtle workstation aura ring
     if (a.state === "normal") {
@@ -864,14 +905,14 @@ function showSignTooltip(cx, cy, signItem) {
   const rowCtrl = document.getElementById("tt-row-controller");
   const elCtrl = document.getElementById("tt-controller");
   if (rowCtrl && elCtrl) {
-    rowCtrl.style.display = "flex";
+    rowCtrl.hidden = false;
     elCtrl.textContent = `${u.id.replace(/_/g, " ").toUpperCase()} (Floor ${u.floor})`;
   }
 
   const rowTgt = document.getElementById("tt-row-target");
   const elTgt = document.getElementById("tt-target");
   if (rowTgt && elTgt) {
-    rowTgt.style.display = "flex";
+    rowTgt.hidden = false;
     elTgt.textContent = `➜ ${v.id.replace(/_/g, " ").toUpperCase()}`;
   }
 
@@ -893,9 +934,9 @@ function showSignTooltip(cx, cy, signItem) {
 function showTooltip(cx, cy, node) {
   // Hide sign-specific rows
   const rowCtrl = document.getElementById("tt-row-controller");
-  if (rowCtrl) rowCtrl.style.display = "none";
+  if (rowCtrl) rowCtrl.hidden = true;
   const rowTgt = document.getElementById("tt-row-target");
-  if (rowTgt) rowTgt.style.display = "none";
+  if (rowTgt) rowTgt.hidden = true;
 
   const hz  = lastState ? (lastState.hazards[node.id] || null) : null;
   const occ = liveOccupancy(node.id, node.floor);
@@ -953,7 +994,8 @@ function updateSignTooltipStatus(action) {
   const signEl = document.getElementById("tt-sign");
   if (!signEl) return;
   if (action === "ARROW") {
-    signEl.textContent = `➤ GREEN ARROW (${signPolicy === "marl" ? "ST-TBA-GAT" : "Dijkstra baseline"})`;
+    const source = signPolicy === "marl" ? "ST-TBA-GAT" : signPolicy === "static" ? "Static signage" : "Dijkstra baseline";
+    signEl.textContent = `➤ GREEN ARROW (${source})`;
     signEl.style.color = "var(--green)";
   } else if (action === "BLOCKED") {
     signEl.textContent = "✖ CORRIDOR BLOCKED (Safety Interlock)";
@@ -996,34 +1038,395 @@ function refreshLiveTooltip() {
 // ── Node list ──────────────────────────────────────────────────────────────────
 function populateNodeSelect() {
   const sel = document.getElementById("node-select");
+  const cameraSel = document.getElementById("camera-node-select");
   sel.innerHTML = "";
+  if (cameraSel) cameraSel.innerHTML = "";
   if (!building) return;
-  Object.values(building.nodes)
-    .filter(n => !n.is_exit)
-    .sort((a, b) => a.id.localeCompare(b.id))
-    .forEach(n => {
+  const nodes = Object.values(building.nodes).filter(n => !n.is_exit);
+  const floors = [...new Set(nodes.map(n => n.floor))].sort((a, b) => a - b);
+  floors.forEach(floor => {
+    const group = document.createElement("optgroup");
+    group.label = `Floor ${floor}`;
+    nodes.filter(n => n.floor === floor)
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .forEach(n => {
       const opt = document.createElement("option");
       opt.value = n.id;
-      opt.textContent = n.id.replace(/_/g, " ");
-      sel.appendChild(opt);
+      opt.textContent = friendlyLabel(n.id);
+      group.appendChild(opt);
     });
+    sel.appendChild(group);
+
+    if (cameraSel) {
+      const cameraGroup = group.cloneNode(true);
+      cameraSel.appendChild(cameraGroup);
+    }
+  });
+}
+
+function backendSummary(info, fallback = "Unavailable") {
+  if (!info) return fallback;
+  if (info.available) return info.name || "Available";
+  return info.name ? `${info.name} · fallback` : fallback;
+}
+
+function updatePerceptionCapabilities(capabilities = {}) {
+  perceptionCapabilities = capabilities;
+  setText("vision-backend", backendSummary(capabilities.visual_detector, "YOLO unavailable"));
+  setText("sensor-backend", backendSummary(capabilities.sensor_detector, "Rule fallback"));
+  const status = document.getElementById("perception-status");
+  if (!status) return;
+  const decoderReady = capabilities.video_decoder && capabilities.video_decoder.available;
+  const yoloReady = capabilities.visual_detector && capabilities.visual_detector.available;
+  status.textContent = yoloReady ? "YOLO READY" : decoderReady ? "HYBRID FALLBACK" : "PREVIEW ONLY";
+  status.className = `tag ${yoloReady ? "good" : decoderReady ? "warning" : "critical"}`;
+}
+
+async function loadPerceptionCapabilities() {
+  try {
+    const response = await fetch("/api/perception/capabilities");
+    if (!response.ok) throw new Error("Capability endpoint unavailable");
+    updatePerceptionCapabilities(await response.json());
+  } catch (error) {
+    setText("vision-backend", "Unavailable");
+    setText("sensor-backend", "Unavailable");
+    setText("perception-detail", error.message);
+  }
+}
+
+function selectedPerceptionFeed(perception, nodeId) {
+  const feeds = Object.values(perception.feeds || {});
+  return feeds.find(feed => feed.node_id === nodeId) || null;
+}
+
+function drawPerceptionOverlay(feed) {
+  const overlay = document.getElementById("camera-detection-overlay");
+  const preview = document.getElementById("camera-preview");
+  if (!overlay || !preview) return;
+  const width = preview.clientWidth || 1;
+  const height = preview.clientHeight || 1;
+  const dpr = window.devicePixelRatio || 1;
+  overlay.width = Math.max(1, Math.round(width * dpr));
+  overlay.height = Math.max(1, Math.round(height * dpr));
+  const context = overlay.getContext("2d");
+  context.scale(dpr, dpr);
+  context.clearRect(0, 0, width, height);
+  if (!feed || !feed.frame_width || !feed.frame_height) return;
+
+  const scaleX = width / feed.frame_width;
+  const scaleY = height / feed.frame_height;
+  (feed.detections || []).forEach(detection => {
+    const [x1, y1, x2, y2] = detection.bbox || [0, 0, 0, 0];
+    const color = detection.threat_type ? "#ff635f" : detection.class_name === "person" ? "#40c9d6" : "#f5b84b";
+    context.strokeStyle = color;
+    context.lineWidth = 2;
+    context.strokeRect(x1 * scaleX, y1 * scaleY, (x2 - x1) * scaleX, (y2 - y1) * scaleY);
+    const label = `${detection.class_name} ${Math.round((detection.confidence || 0) * 100)}%`;
+    context.font = "700 10px ui-monospace, monospace";
+    const labelWidth = context.measureText(label).width + 8;
+    const labelY = Math.max(12, y1 * scaleY);
+    context.fillStyle = color;
+    context.fillRect(x1 * scaleX, labelY - 12, labelWidth, 13);
+    context.fillStyle = "#071018";
+    context.fillText(label, x1 * scaleX + 4, labelY - 2);
+  });
+}
+
+function updatePerceptionPanel(perception = {}) {
+  if (perception.capabilities) updatePerceptionCapabilities(perception.capabilities);
+  const selector = document.getElementById("camera-node-select");
+  const nodeId = selector ? selector.value : "";
+  const feed = selectedPerceptionFeed(perception, nodeId);
+  const nodeResult = (perception.nodes || {})[nodeId] || null;
+  const vector = (nodeResult && nodeResult.vector) || (feed && feed.vector) || {};
+
+  setText("vector-hazard", Number(vector.hazard || 0).toFixed(2));
+  setText("vector-crowd", Number(vector.crowd_density || 0).toFixed(2));
+  setText("vector-confidence", Number(vector.visual_confidence || 0).toFixed(2));
+  setText("vector-sensor", Number(vector.sensor_anomaly || 0).toFixed(2));
+  const communication = (nodeResult && nodeResult.communication) || {};
+  setText("packet-hex", communication.hex || "--------");
+  setText("packet-bits", communication.bits || "00000000000000000000000000000000");
+  setText("packet-directions", (communication.active_directions || []).join(" · ") || "—");
+
+  const preview = document.getElementById("camera-preview");
+  if (!feed) {
+    if (preview && preview.dataset.feedId) {
+      preview.removeAttribute("src");
+      preview.removeAttribute("data-feed-id");
+      preview.load();
+    }
+    setText("camera-feed-label", "NO FEED ASSIGNED");
+    setText("perception-detail", "Waiting for a node feed.");
+    drawPerceptionOverlay(null);
+    return;
+  }
+
+  if (preview && preview.dataset.feedId !== feed.feed_id) {
+    preview.dataset.feedId = feed.feed_id;
+    preview.src = feed.media_url;
+    preview.load();
+  }
+  setText("camera-feed-label", `${friendlyLabel(feed.node_id).toUpperCase()} · ${String(feed.status).toUpperCase()}`);
+  drawPerceptionOverlay(feed);
+  const detectionNames = (feed.detections || []).map(item => item.class_name).slice(0, 4);
+  const detail = feed.error
+    ? feed.error
+    : `${feed.person_count || 0} people detected${feed.hazard_type ? ` · ${friendlyLabel(feed.hazard_type)} visual threat` : ""}${detectionNames.length ? ` · classes: ${detectionNames.join(", ")}` : ""}`;
+  setText("perception-detail", detail);
+}
+
+async function uploadPerceptionFeed() {
+  const nodeId = document.getElementById("camera-node-select").value;
+  const input = document.getElementById("camera-video-input");
+  const ack = document.getElementById("camera-upload-ack");
+  const button = document.getElementById("btn-camera-upload");
+  if (!input.files || !input.files[0]) {
+    ack.textContent = "Choose a recorded video first.";
+    ack.className = "inject-ack error";
+    return;
+  }
+
+  const file = input.files[0];
+  button.disabled = true;
+  ack.textContent = "Uploading and assigning feed…";
+  ack.className = "inject-ack";
+  try {
+    const response = await fetch(`/api/perception/feeds?node_id=${encodeURIComponent(nodeId)}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": file.type || "application/octet-stream",
+        "X-Video-Filename": file.name,
+      },
+      body: file,
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.detail || "Feed assignment failed");
+    updatePerceptionCapabilities(payload.capabilities || {});
+    const preview = document.getElementById("camera-preview");
+    preview.dataset.feedId = payload.feed.feed_id;
+    preview.src = payload.feed.media_url;
+    preview.load();
+    preview.play().catch(() => {});
+    ack.textContent = payload.feed.status === "unavailable"
+      ? "Feed assigned for preview; inference backend is unavailable."
+      : "Feed assigned; live perception started.";
+    ack.className = `inject-ack ${payload.feed.status === "unavailable" ? "error" : "success"}`;
+    appendEvent(`Camera feed assigned to ${friendlyLabel(nodeId)}`);
+  } catch (error) {
+    ack.textContent = error.message;
+    ack.className = "inject-ack error";
+  } finally {
+    button.disabled = false;
+  }
 }
 
 // ── Metrics ────────────────────────────────────────────────────────────────────
-function updateMetrics(m) {
+function updateMetrics(m, state = {}) {
   if (!m) return;
+  const total = Math.max(0, m.total || 0);
+  const moving = (m.moving || 0) + (m.rerouting || 0);
+  const accounted = total > 0 ? Math.min(100, ((m.evacuated || 0) / total) * 100) : 0;
+  const activeHazards = Object.values(state.hazards || {}).filter(h => (h.level || 0) >= 0.05).length;
+
+  setText("m-total",      total || "—");
   setText("m-normal",     m.normal     ?? "—");
   setText("m-reacting",   m.reacting   ?? "—");
-  setText("m-moving",     m.moving     ?? "—");
+  setText("m-moving",     moving);
   setText("m-danger",     m.in_danger  ?? "—");
   setText("m-evacuated",  m.evacuated  ?? "—");
+  setText("m-evacuated-secondary", m.evacuated ?? "—");
   setText("m-casualties", m.casualties ?? "—");
+  setText("m-hazard-count", activeHazards);
+  setText("m-accounted", `${accounted.toFixed(0)}%`);
   setText("m-time",       formatTime(m.sim_time ?? 0));
+
+  setProgress("progress-accounted", accounted);
+  setProgress("bar-normal", total ? (m.normal || 0) / total * 100 : 0);
+  setProgress("bar-reacting", total ? (m.reacting || 0) / total * 100 : 0);
+  setProgress("bar-moving", total ? moving / total * 100 : 0);
+  setProgress("bar-evacuated", accounted);
+  const ring = document.getElementById("accountability-ring");
+  if (ring) ring.style.setProperty("--progress", accounted.toFixed(1));
 }
 function setText(id, val) { const el = document.getElementById(id); if (el) el.textContent = val; }
+function setProgress(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.style.width = `${Math.max(0, Math.min(100, value))}%`;
+}
 function formatTime(s) {
   return `${Math.floor(s/60).toString().padStart(2,"0")}:${Math.floor(s%60).toString().padStart(2,"0")}`;
 }
+function friendlyLabel(value) {
+  return String(value || "")
+    .replace(/_f\d+$/i, "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function activeHazardEntries(hazards = {}) {
+  return Object.entries(hazards)
+    .filter(([, h]) => (h.level || 0) >= 0.05)
+    .sort((a, b) => (b[1].level || 0) - (a[1].level || 0));
+}
+
+function updateOperationalState(state) {
+  const m = state.metrics || {};
+  const hazards = activeHazardEntries(state.hazards);
+  const total = m.total || 0;
+  const resolved = total > 0 && (m.evacuated || 0) + (m.casualties || 0) >= total;
+  let phase = "monitor";
+  let title = "Monitoring";
+  let code = "S0";
+  let copy = "Facility telemetry is nominal. Personnel remain at assigned stations.";
+
+  if (!state.running) {
+    title = "Exercise paused";
+    code = "HOLD";
+    copy = "The digital twin is paused. Live facility state remains visible for review.";
+  } else if (resolved && state.alarm_active) {
+    phase = "muster";
+    title = "Accountability complete";
+    code = "S3";
+    copy = "All simulated personnel have reached muster or are recorded for response.";
+  } else if (state.alarm_active && hazards.length) {
+    phase = "guide";
+    title = (m.casualties || 0) > 0 ? "Critical response" : "Active evacuation";
+    code = (m.casualties || 0) > 0 ? "CRIT" : "S2";
+    copy = `${hazards.length} hazard zone${hazards.length === 1 ? "" : "s"} active. Dynamic signs are directing personnel toward viable egress.`;
+  } else if (state.alarm_active) {
+    phase = "alarm";
+    title = "Drill alarm active";
+    code = "S1";
+    copy = "Evacuation has been declared without an injected hazard. Personnel are in response transition.";
+  } else if (hazards.length) {
+    phase = "alarm";
+    title = "Hazard requires alarm";
+    code = "WARN";
+    copy = "A hazard remains active while the evacuation alarm is not asserted.";
+  }
+
+  setText("incident-phase", title);
+  setText("phase-code", code);
+  setText("incident-copy", copy);
+  setText("run-state", state.running ? "RUNNING" : "PAUSED");
+  setText("last-update", "LIVE");
+  document.querySelectorAll(".phase-step").forEach((el, index) => {
+    const order = ["monitor", "alarm", "guide", "muster"];
+    const activeIndex = order.indexOf(phase);
+    el.classList.toggle("active", index === activeIndex);
+    el.classList.toggle("complete", index < activeIndex);
+  });
+
+  const play = document.getElementById("btn-play");
+  const pause = document.getElementById("btn-pause");
+  if (play) play.classList.toggle("primary", !state.running);
+  if (pause) pause.classList.toggle("primary", state.running);
+
+  if (previousAlarmState !== null && previousAlarmState !== state.alarm_active) {
+    appendEvent(state.alarm_active ? "Evacuation alarm activated" : "Evacuation alarm stood down");
+  }
+  if (previousRunState !== null && previousRunState !== state.running) {
+    appendEvent(state.running ? "Simulation resumed" : "Simulation paused");
+  }
+  previousAlarmState = state.alarm_active;
+  previousRunState = state.running;
+}
+
+function policyLabel(mode) {
+  return mode === "marl" ? "ST-TBA-GAT" : mode === "static" ? "Static signage" : "Dynamic Dijkstra";
+}
+
+function updatePolicyStatus(policy = {}) {
+  const mode = policy.mode || "dijkstra";
+  signPolicy = mode;
+  const select = document.getElementById("sign-policy-select");
+  if (select && select.value !== mode) select.value = mode;
+  setText("policy-status-text", policyLabel(mode).toUpperCase());
+
+  const descriptions = {
+    marl: "Distributed ST-TBA-GAT inference commands each directional sign using local hazard, crowd, and topology features.",
+    dijkstra: "Centralized hazard-aware shortest-path routing provides the operational baseline.",
+    static: "Fixed geometric egress signage provides the non-adaptive code-comparison baseline.",
+  };
+  setText("policy-description", descriptions[mode] || descriptions.dijkstra);
+
+  const badge = document.getElementById("policy-assurance");
+  if (badge) {
+    if (mode === "marl" && policy.ready) {
+      badge.textContent = "MODEL LOADED";
+      badge.className = "tag good";
+    } else if (mode === "marl") {
+      badge.textContent = "FALLBACK";
+      badge.className = "tag critical";
+    } else {
+      badge.textContent = "BASELINE";
+      badge.className = "tag";
+    }
+  }
+
+  let source = mode === "static" ? "Facility topology" : "Live hazard graph";
+  if (mode === "marl") {
+    source = policy.ready
+      ? `${policy.checkpoint || "Checkpoint"}${policy.episode != null ? ` · episode ${policy.episode}` : ""}`
+      : policy.load_error || "Policy unavailable";
+  }
+  setText("policy-source", source);
+
+  if (previousPolicyMode !== null && previousPolicyMode !== mode) {
+    appendEvent(`${policyLabel(mode)} routing active`);
+  }
+  previousPolicyMode = mode;
+}
+
+function updateIncidentList(hazards = {}) {
+  const list = document.getElementById("active-incidents");
+  const entries = activeHazardEntries(hazards);
+  setText("incident-count", entries.length);
+  if (!list) return;
+  list.replaceChildren();
+  if (!entries.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No active hazard zones";
+    list.appendChild(empty);
+    return;
+  }
+  entries.slice(0, 5).forEach(([nodeId, hazard]) => {
+    const item = document.createElement("div");
+    item.className = `incident-item${(hazard.level || 0) >= 0.65 ? " critical" : ""}`;
+    const title = document.createElement("strong");
+    title.textContent = friendlyLabel(nodeId);
+    const type = document.createElement("span");
+    type.textContent = friendlyLabel(hazard.type || "Hazard");
+    const level = document.createElement("b");
+    level.textContent = `${Math.round((hazard.level || 0) * 100)}%`;
+    item.append(title, type, level);
+    list.appendChild(item);
+  });
+}
+
+function appendEvent(message) {
+  const log = document.getElementById("event-log");
+  if (!log || !message) return;
+  const li = document.createElement("li");
+  const time = document.createElement("time");
+  time.textContent = formatTime(lastState?.metrics?.sim_time || 0);
+  const text = document.createElement("span");
+  text.textContent = message;
+  li.append(time, text);
+  log.prepend(li);
+  while (log.children.length > 8) log.lastElementChild.remove();
+}
+
+function showCommandFeedback(message, ok = true) {
+  const el = document.getElementById("command-feedback");
+  if (!el) return;
+  el.textContent = message;
+  el.className = `command-feedback ${ok ? "success" : "error"}`;
+  window.setTimeout(() => { el.textContent = ""; }, 4500);
+}
+
 function updateSpeedDisplay(spd) {
   const sl = document.getElementById("speed-slider");
   const vl = document.getElementById("speed-val");
@@ -1032,21 +1435,61 @@ function updateSpeedDisplay(spd) {
 }
 
 // ── Floor tabs ─────────────────────────────────────────────────────────────────
-document.querySelectorAll(".floor-tab").forEach(btn => {
-  btn.addEventListener("click", () => {
-    currentFloor = parseInt(btn.dataset.floor);
-    document.querySelectorAll(".floor-tab").forEach(b => b.classList.remove("active"));
-    btn.classList.add("active");
-    fitBuilding(true);
+function setFloor(floor) {
+  currentFloor = Number(floor);
+  document.querySelectorAll(".floor-tab").forEach(btn => {
+    btn.classList.toggle("active", Number(btn.dataset.floor) === currentFloor);
   });
-});
+  setText("floor-context", `Floor ${currentFloor}`);
+  clickedNode = null;
+  hoverNode = null;
+  tooltip.classList.remove("visible");
+  fitBuilding(true);
+}
+
+function buildFloorTabs() {
+  const container = document.getElementById("floor-tabs");
+  if (!container || !building) return;
+  const floors = [...new Set(Object.values(building.nodes).map(n => n.floor))].sort((a, b) => a - b);
+  if (!floors.includes(currentFloor)) currentFloor = floors[0];
+  container.replaceChildren();
+  floors.forEach(floor => {
+    const button = document.createElement("button");
+    button.className = `floor-tab${floor === currentFloor ? " active" : ""}`;
+    button.dataset.floor = floor;
+    button.textContent = `L${floor}`;
+    button.title = `View Floor ${floor}`;
+    button.addEventListener("click", () => setFloor(floor));
+    container.appendChild(button);
+  });
+  setText("floor-context", `Floor ${currentFloor}`);
+}
+
+function updateInfrastructureSummary() {
+  if (!building) return;
+  const controllers = Object.keys(building.nodes || {}).length;
+  const channels = (building.edges || []).length * 2;
+  setText("controller-count", controllers);
+  setText("sign-count", channels);
+  setText("iot-status-text", `${controllers} CONTROLLERS · ${channels} LINKS`);
+}
 
 // ── Controls ───────────────────────────────────────────────────────────────────
-document.getElementById("btn-play").addEventListener("click",  () => send({action:"play"}));
-document.getElementById("btn-pause").addEventListener("click", () => send({action:"pause"}));
+document.getElementById("btn-play").addEventListener("click",  () => {
+  send({action:"play"});
+  showCommandFeedback("Simulation running");
+});
+document.getElementById("btn-pause").addEventListener("click", () => {
+  send({action:"pause"});
+  showCommandFeedback("Simulation paused");
+});
 document.getElementById("btn-reset").addEventListener("click", () => {
-  const n = parseInt(document.getElementById("evacuee-count").value) || 60;
+  const input = document.getElementById("evacuee-count");
+  const n = Math.max(5, Math.min(400, parseInt(input.value) || 60));
+  input.value = n;
   send({action:"reset", num_evacuees:n});
+  appendEvent(`Exercise reset with ${n} personnel`);
+  showCommandFeedback("Exercise reset; hazards cleared");
   fitBuilding(true);
 });
 
@@ -1058,25 +1501,18 @@ if (btnAlarm) {
 const signPolicySel = document.getElementById("sign-policy-select");
 if (signPolicySel) {
   signPolicySel.addEventListener("change", (e) => {
-    signPolicy = e.target.value;
-    lastMarlUpdate = 0; // immediate update
-    const mode = signPolicy === "marl" ? "marl" : "dijkstra";
-    send({action: "set_policy_mode", mode: mode});
-    const pill = document.getElementById("policy-status-text");
-    if (pill) {
-      if (signPolicy === "marl") {
-        pill.textContent = "AI: ST-TBA-GAT ACTIVE";
-        pill.style.color = "#38bdf8";
-      } else if (signPolicy === "dijkstra") {
-        pill.textContent = "BASELINE: DIJKSTRA ACTIVE";
-        pill.style.color = "#fbbf24";
-      } else {
-        pill.textContent = "EXPLORATION: RANDOM";
-        pill.style.color = "#c084fc";
-      }
-    }
+    send({action: "set_policy_mode", mode: e.target.value});
+    showCommandFeedback(`Requesting ${policyLabel(e.target.value)} routing…`);
   });
 }
+
+window.setRoutingMode = function(mode) {
+  if (!['marl', 'dijkstra', 'static'].includes(mode)) return false;
+  const select = document.getElementById("sign-policy-select");
+  if (select) select.value = mode;
+  send({action: "set_policy_mode", mode});
+  return true;
+};
 
 const speedSlider = document.getElementById("speed-slider");
 speedSlider.addEventListener("input", () => {
@@ -1087,7 +1523,7 @@ speedSlider.addEventListener("input", () => {
 
 const intensitySlider = document.getElementById("intensity-slider");
 intensitySlider.addEventListener("input", () => {
-  document.getElementById("intensity-val").textContent = parseFloat(intensitySlider.value).toFixed(1);
+  document.getElementById("intensity-val").textContent = parseFloat(intensitySlider.value).toFixed(2);
 });
 
 document.getElementById("btn-inject").addEventListener("click", () => {
@@ -1098,10 +1534,30 @@ document.getElementById("btn-inject").addEventListener("click", () => {
   send({action:"inject_disaster", node_id:node, hazard_type:type, intensity:intens});
 });
 
+document.getElementById("node-select").addEventListener("change", event => {
+  const node = building?.nodes?.[event.target.value];
+  if (!node) return;
+  clickedNode = node.id;
+  setFloor(node.floor);
+  clickedNode = node.id;
+});
+
+document.getElementById("camera-video-input").addEventListener("change", event => {
+  const file = event.target.files && event.target.files[0];
+  setText("camera-file-name", file ? `${file.name} · ${(file.size / 1048576).toFixed(1)} MB` : "MP4, WebM, MOV, AVI or MKV · max 250 MB");
+});
+
+document.getElementById("btn-camera-upload").addEventListener("click", uploadPerceptionFeed);
+document.getElementById("camera-node-select").addEventListener("change", () => {
+  updatePerceptionPanel(lastState ? (lastState.perception || {}) : {});
+});
+
 document.getElementById("btn-fit").addEventListener("click", () => fitBuilding(true));
 
 // ── Init ───────────────────────────────────────────────────────────────────────
 window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
 requestAnimationFrame(render);
+setConn(false);
+loadPerceptionCapabilities();
 connectWS();

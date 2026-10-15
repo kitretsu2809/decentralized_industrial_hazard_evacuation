@@ -46,6 +46,7 @@ services:
         condition: service_healthy
     environment:
       - REDIS_URL=${REDIS_URL}
+      - SENSOR_CNN_CHECKPOINT=/app/data/models/sensor_cnn.pt
       - PYTHONPATH=/app
     restart: unless-stopped
 
