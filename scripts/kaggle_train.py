@@ -19,7 +19,7 @@ from pathlib import Path
 
 EXPECTED_NODE_DIM = 51
 EXPECTED_MAX_CORRIDORS = 8
-EXPECTED_NUM_ACTIONS = 9
+EXPECTED_NUM_ACTIONS = 37
 
 
 def validate_checkpoint(path: Path) -> dict:

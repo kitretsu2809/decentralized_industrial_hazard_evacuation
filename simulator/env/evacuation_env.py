@@ -20,19 +20,27 @@ from simulator.engine.pedestrian import PedestrianState
 from simulator.engine.hazard_model import HazardType
 from core.communication.hazard_packet import HazardPacket32, unpack_hazard_packet
 from core.graph.directions import MAX_DIRECTIONS
+from core.policy.routing_actions import (
+    action_to_direction_mask,
+    num_routing_actions,
+    standby_action,
+    valid_actions_for_direction_mask,
+)
 
 
 class IndustrialEvacuationEnv(ParallelEnv):
     """
     PettingZoo ParallelEnv for 36-node edge router network.
     Observation space: local sensor features + 4-byte gossip + incident corridor states.
-    Action space: one discrete primary corridor choice per router, plus standby.
-    The environment translates that choice into physical NORMAL / CAUTION /
-    BLOCKED / GREEN ARROW signboard states for each incident corridor.
+    Action space: standby, one green direction, or two green directions per
+    router. The environment translates that learned command into physical
+    NORMAL / CAUTION / BLOCKED / GREEN ARROW states.
     """
     metadata = {"name": "industrial_evacuation_v1", "render_modes": ["human"]}
 
     MAX_CORRIDORS: int = MAX_DIRECTIONS
+    NUM_ACTIONS: int = num_routing_actions(MAX_DIRECTIONS)
+    STANDBY_ACTION: int = standby_action(MAX_DIRECTIONS)
     DECISION_DT: float = 2.5  # Decision interval: policy steps every 2.5 sim-seconds (25 SFM ticks)
     MAX_SIM_TIME: float = 120.0  # Max episode length in simulated seconds
 
@@ -83,12 +91,12 @@ class IndustrialEvacuationEnv(ParallelEnv):
             agent: Box(low=-5.0, high=5.0, shape=(self.obs_dim,), dtype=np.float32)
             for agent in self.possible_agents
         }
-        # Discrete choice: 0..MAX_CORRIDORS-1 = primary green exit corridor, MAX_CORRIDORS = standby
+        # Categorical encoding of zero, one, or two selected direction bits.
         self.action_spaces: Dict[str, gymnasium.spaces.Discrete] = {
-            agent: gymnasium.spaces.Discrete(self.MAX_CORRIDORS + 1)
+            agent: gymnasium.spaces.Discrete(self.NUM_ACTIONS)
             for agent in self.possible_agents
         }
-        self.action_space = gymnasium.spaces.Discrete(self.MAX_CORRIDORS + 1)
+        self.action_space = gymnasium.spaces.Discrete(self.NUM_ACTIONS)
 
         # Scale-invariant team reward weights. Individual transition rewards are
         # normalized by crowd size; full discounted returns are not hard-bounded.
@@ -108,7 +116,7 @@ class IndustrialEvacuationEnv(ParallelEnv):
         self.last_casualties: int = 0
         self.last_progress_finished: int = 0
         self.stagnation_timer: float = 0.0
-        self.prev_actions: Dict[str, int] = {nid: self.MAX_CORRIDORS for nid in self.agents}
+        self.prev_actions: Dict[str, int] = {nid: self.STANDBY_ACTION for nid in self.agents}
         self.last_hazards: Dict[str, float] = {nid: 0.0 for nid in self.agents}
         self.last_crowds: Dict[str, float] = {nid: 0.0 for nid in self.agents}
         self.observed_hazard_deltas: Dict[str, float] = {nid: 0.0 for nid in self.agents}
@@ -139,62 +147,26 @@ class IndustrialEvacuationEnv(ParallelEnv):
         return packets
 
     def get_action_mask(self, agent_id: str) -> np.ndarray:
-        """Returns boolean mask of length MAX_CORRIDORS + 1 (True = valid corridor choice or standby)."""
-        mask = np.zeros(self.MAX_CORRIDORS + 1, dtype=bool)
+        """Allow physical safe directions without embedding an expert route."""
         direction_slots = self.directional_neighbors.get(agent_id, ())
-        local_h = self.sim.hazard.levels.get(agent_id, 0.0)
-        curr_dist = self.exit_dists.get(agent_id, 50.0)
-        # Check if at least one forward corridor (toward exit) is safe and passable
-        has_safe_forward = False
+        available_direction_mask = 0
         for k, nbr in enumerate(direction_slots):
             if nbr is None:
                 continue
             packet = self.received_packets.get(nbr)
             nbr_h = packet.hazard if packet else self.sim.hazard.levels.get(nbr, 0.0)
-            nbr_dist = self.exit_dists.get(nbr, 50.0)
             is_hoist = "hoist" in agent_id and "hoist" in nbr
-            is_dead_end = len(self.agent_neighbors.get(nbr, [])) <= 1 and nbr not in self.sim.exits
-            if local_h < 0.30 and nbr_h < 0.30 and not is_hoist and not is_dead_end:
-                if nbr_dist <= curr_dist + 2.0:
-                    has_safe_forward = True
-                    break
-
-        for k, nbr in enumerate(direction_slots):
-            if nbr is None:
+            if nbr_h >= 0.80 or is_hoist:
                 continue
-            packet = self.received_packets.get(nbr)
-            nbr_h = packet.hazard if packet else self.sim.hazard.levels.get(nbr, 0.0)
-            nbr_dist = self.exit_dists.get(nbr, 50.0)
-            is_hoist = "hoist" in agent_id and "hoist" in nbr
-            is_dead_end = len(self.agent_neighbors.get(nbr, [])) <= 1 and nbr not in self.sim.exits
-            if local_h >= 0.80 or nbr_h >= 0.80 or is_hoist or is_dead_end:
-                continue
-
-            # In safe conditions with clear forward paths, mask out deep reverse corridors
-            if has_safe_forward and local_h < 0.30 and nbr_h < 0.30:
-                if nbr_dist > curr_dist + 4.0:
-                    continue  # Prevents pointless backward loops when the exit path is completely clear
-
-            mask[k] = True
-
-        # Safety fallback: ensure at least one physical corridor is available
-        if not np.any(mask[:self.MAX_CORRIDORS]):
-            for k, nbr in enumerate(direction_slots):
-                if nbr is None:
-                    continue
-                packet = self.received_packets.get(nbr)
-                nbr_h = packet.hazard if packet else self.sim.hazard.levels.get(nbr, 0.0)
-                is_hoist = "hoist" in agent_id and "hoist" in nbr
-                is_dead_end = len(self.agent_neighbors.get(nbr, [])) <= 1 and nbr not in self.sim.exits
-                if local_h < 0.80 and nbr_h < 0.80 and not is_hoist and not is_dead_end:
-                    mask[k] = True
-
-        mask[self.MAX_CORRIDORS] = True  # Standby option is always valid
-        return mask
+            available_direction_mask |= 1 << k
+        return valid_actions_for_direction_mask(
+            available_direction_mask,
+            self.MAX_CORRIDORS,
+        )
 
     def get_all_action_masks(self) -> np.ndarray:
-        """Returns (N, MAX_CORRIDORS + 1) boolean array."""
-        masks = np.zeros((len(self.agents), self.MAX_CORRIDORS + 1), dtype=bool)
+        """Returns (N, NUM_ACTIONS) boolean array."""
+        masks = np.zeros((len(self.agents), self.NUM_ACTIONS), dtype=bool)
         for i, agent in enumerate(self.agents):
             masks[i] = self.get_action_mask(agent)
         return masks
@@ -218,7 +190,11 @@ class IndustrialEvacuationEnv(ParallelEnv):
         cluster_node = opts.get("cluster_node")
         cluster_ratio = float(opts.get("cluster_ratio", 0.0))
         self.sim.reset(num_evacuees=num_evac, cluster_node=cluster_node, cluster_ratio=cluster_ratio)
-        self.sim.set_policy_mode(opts.get("policy_mode", "marl"))
+        policy_mode = opts.get("policy_mode", "marl")
+        self.sim.set_policy_mode(
+            policy_mode,
+            externally_controlled=(policy_mode == "marl"),
+        )
 
         # Inject disaster scenario
         if opts.get("inject", True):
@@ -243,7 +219,7 @@ class IndustrialEvacuationEnv(ParallelEnv):
 
         self.last_evacuated = 0
         self.last_casualties = 0
-        self.prev_actions = {a: self.MAX_CORRIDORS for a in self.agents}
+        self.prev_actions = {a: self.STANDBY_ACTION for a in self.agents}
         self.last_hazards = {nid: self.sim.hazard.levels.get(nid, 0.0) for nid in self.agents}
         self.last_crowds = {nid: 0.0 for nid in self.agents}
         self.observed_hazard_deltas = {nid: 0.0 for nid in self.agents}
@@ -332,7 +308,7 @@ class IndustrialEvacuationEnv(ParallelEnv):
     ]:
         """
         Executes one policy step:
-          1. Translates one of eight directional choices into physical signboard states.
+          1. Translates a learned zero/one/two-direction command into signboard states.
           2. Runs continuous SFM physics sub-steps (DECISION_DT seconds).
           3. Evaluates cooperative multi-objective team reward with dense progress shaping.
         """
@@ -342,7 +318,8 @@ class IndustrialEvacuationEnv(ParallelEnv):
 
         for agent, act in actions.items():
             act_idx = int(np.asarray(act).item()) if isinstance(act, (np.ndarray, list)) else int(act)
-            prev_act = self.prev_actions.get(agent, self.MAX_CORRIDORS)
+            prev_act = self.prev_actions.get(agent, self.STANDBY_ACTION)
+            selected_mask = action_to_direction_mask(act_idx, self.MAX_CORRIDORS)
             direction_slots = self.directional_neighbors.get(agent, ())
             local_hazard = self.sim.hazard.levels.get(agent, 0.0)
             # These are the deltas the policy actually observed. Comparing against
@@ -360,11 +337,13 @@ class IndustrialEvacuationEnv(ParallelEnv):
                     continue
                 packet = self.received_packets.get(nbr)
                 neighbor_hazard = packet.hazard if packet else self.sim.hazard.levels.get(nbr, 0.0)
-                if local_hazard >= 0.80 or neighbor_hazard >= 0.80:
+                is_selected = bool(selected_mask & (1 << k))
+                is_hoist = "hoist" in agent and "hoist" in nbr
+                if neighbor_hazard >= 0.80 or is_hoist:
                     action_vec[k] = 2  # BLOCKED (Red X)
-                    if k == act_idx:
+                    if is_selected:
                         safety_interventions += 1
-                elif k == act_idx:
+                elif is_selected:
                     action_vec[k] = 3  # GREEN ARROW
                 elif neighbor_hazard >= 0.30:
                     action_vec[k] = 1  # CAUTION (Amber Detour)

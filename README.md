@@ -40,17 +40,17 @@ In petrochemical complexes, offshore platforms, and hazardous processing plants,
 
 | System Type | Failure Mode | Survival @ 30% Link Loss | Bottleneck Behavior |
 |---|---|:---:|:---:|
-| **Centralized PLC / SCADA** | Multi-hop backhaul severed → dynamic signs freeze → evacuees routed into gas plume | **~22%** | Funnels entire crowd into single corridor causing crushing stampedes |
-| **Static NFPA 101 Signage** | Zero environmental awareness → fixed paths regardless of active hazards or blockages | **~36%** | Blindly guides workers toward locked or burning stairwells |
-| **Decentralized Edge (Ours)** | Local 1-hop sensor gossip + reflexive hardware interlock + dynamic parallel flow splitting | **>91%** | Dynamically balances egress flows across parallel green corridors |
+| **Centralized PLC / SCADA** | Multi-hop backhaul severed → dynamic signs freeze → evacuees routed into gas plume | **Measured by seeded benchmark** | Funnels the crowd through centrally selected corridors |
+| **Static NFPA 101 Signage** | Zero environmental awareness → fixed paths regardless of active hazards or blockages | **Measured by seeded benchmark** | Continues along fixed blueprint routes |
+| **Decentralized Edge (Ours)** | Local 1-hop sensor gossip + reflexive hardware interlock + learned parallel flow splitting | **Measured by seeded benchmark** | Selects one or two green corridors from local observations |
 
 ### The Decentralized Edge Approach
 
 Each **edge sign router** (ESP32 / Jetson Nano class embedded hardware) operates autonomously:
 1. **Local GAT-GRU Inference**: Spatio-Temporal Graph Attention Network (`ST_TBA_GAT`) processing 51-dimensional local and eight-direction topological observations.
 2. **32-Bit Hazard Gossip**: Broadcasts an exact four-byte PDU containing an 8-bit connected-direction mask, 8-bit hazard, 8-bit crowd density, 4-bit hazard type, 2-bit protocol version, and 2-bit TTL. Neural embeddings are never transmitted over wireless links.
-3. **Reflexive Hardware Safety Override**: Deterministic analog interlock: if local or neighbor hazard $H_v \ge 0.80$, the corridor is physically blocked (Red X) in $< 20\text{ ms}$, overriding software actions.
-4. **Dynamic Flow Splitting & Dual Arrow Guidance**: When a primary corridor approaches capacity ($\rho \ge 50\%$), the signboard automatically splits arriving pedestrians across parallel alternative corridors and illuminates dual green directional arrows on the digital twin canvas.
+3. **Reflexive Hardware Safety Override**: If a downstream corridor reaches $H_v \ge 0.80$, that direction is clamped to a Red X. A hazardous current room keeps safe outward corridors available for escape.
+4. **Learned Flow Splitting & Dual Arrow Guidance**: The policy can explicitly select either one safe direction or a pair of directions. A two-direction action illuminates dual green arrows and deterministically partitions the arriving crowd across both corridors.
 
 ---
 
@@ -67,7 +67,7 @@ Occupants move in continuous 2D coordinate space governed by realistic physical 
 To eliminate doorway arching, stampedes, and crushing jams ($\rho > 4.5\text{ peds/m}^2$), signboards at multi-way junctions dynamically divide high-density crowds:
 - **Proportional Stream Partitioning**: Incoming arrivals are balanced across all illuminated safe forward paths:
   $$\text{Corridor Target} = \text{forward\_green}[\text{agent\_id} \pmod{|\text{forward\_green}|}]$$
-- **Congestion-Aware Local Detour**: If an evacuee's primary corridor queue reaches $\ge 50\%$ capacity and an open parallel route exists, 50% of oncoming arrivals are diverted to the secondary route.
+- **Congestion-Aware Learned Detour**: Local and adjacent crowd density are policy observations. The network must choose a two-direction action when flow splitting is beneficial; no hidden shortest-path or congestion heuristic makes that decision for it.
 - **Pure Signboard Compliance**: Evacuees have zero omniscient map knowledge—they strictly follow local illuminated signs, preventing cheating and unrealistic shortcuts.
 
 ### 3. Spatial Variance & Doorway Arching Penalties in MARL
@@ -285,19 +285,11 @@ PYTHONPATH=. python simulator/training/train_mappo.py \
     --checkpoint checkpoints/directional/best_policy.pt
 ```
 
-Example Output:
-```text
--------------------------------------------------------------------------------------
-METRIC                    | STATIC NFPA        | CENTRALIZED DIJK   | ST-TBA-GAT (OURS) 
--------------------------------------------------------------------------------------
-Survival Rate (%)         |  36.2 ±  4.1%      |  54.8 ±  5.2%      |  92.4 ±  2.8%     
-Casualties (count)        |  38.2 ±  3.5       |  27.1 ±  3.2       |   4.5 ±  1.6      
-Avg Egress Time (s)       |  89.4 ±  5.2s      |  76.2 ±  4.8s      |  58.1 ±  3.4s     
--------------------------------------------------------------------------------------
-🌟 Relative Casualty Reduction vs Static NFPA:    88.2%
-🌟 Relative Casualty Reduction vs Centralized:    83.4%
-=====================================================================================
-```
+The report includes Static NFPA, centralized Dijkstra, always-standby, random
+valid actions, an untrained network, and the trained network under identical
+scenario seeds. It reports evacuated, casualties, unfinished occupants, and
+time. No example performance numbers are hard-coded; use the measured output
+from the downloaded checkpoint in demonstrations and patent evidence.
 
 ### 2. Multi-Scenario Stress Testing Suite
 
@@ -316,7 +308,7 @@ PYTHONPATH=. python evaluation/run_experiments.py \
 The project includes an automated test suite covering MARL environment logic, continuous crowd dynamics, disaster physics, GAT-GRU neural layers, and REST endpoints:
 
 ```bash
-# Run all 33 unit tests:
+# Run the complete unit test suite:
 PYTHONPATH=. python -m unittest discover tests -v
 ```
 

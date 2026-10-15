@@ -45,6 +45,7 @@ desktop.ini
 checkpoints/*.pt
 checkpoints/*.onnx
 data/models/*.onnx
+data/models/*.onnx.data
 data/models/*.pt
 data/models/*.metrics.json
 data/sensor_cnn_synthetic.*

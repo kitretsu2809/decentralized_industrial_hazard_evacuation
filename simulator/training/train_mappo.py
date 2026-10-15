@@ -24,6 +24,10 @@ if str(_REPO_DIR) not in sys.path:
 from simulator.env.evacuation_env import IndustrialEvacuationEnv
 from simulator.policy.st_tba_gat import ST_TBA_GAT
 from simulator.engine.pedestrian import PedestrianState
+from core.policy.routing_actions import (
+    direction_mask_to_action,
+    standby_action,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -43,7 +47,7 @@ class RolloutBuffer:
         self.hidden_states: List[np.ndarray] = []  # (N, H)
         self.actions: List[np.ndarray] = []        # (N,)
         self.action_log_probs: List[np.ndarray] = []  # (N,)
-        self.action_masks: List[np.ndarray] = []   # (N, K+1)
+        self.action_masks: List[np.ndarray] = []   # (N, NUM_ACTIONS)
         self.rewards: List[float] = []             # scalar
         self.values: List[float] = []              # scalar
         # True only for an MDP terminal state. Time-limit/stagnation truncations
@@ -350,6 +354,7 @@ class MAPPOTrainer:
             self.num_agents, self.hidden_dim, device=self.device
         )
         total_reward = 0.0
+        total_safety_interventions = 0
         step_count = 0
 
         while True:
@@ -397,6 +402,9 @@ class MAPPOTrainer:
                 agent: actions_np[i] for i, agent in enumerate(self.env.agents)
             }
             next_obs, rewards, terminations, truncations, infos = self.env.step(action_dict)
+            total_safety_interventions += int(
+                infos[self.env.agents[0]].get("safety_interventions", 0)
+            )
 
             reward = rewards[self.env.agents[0]]
             terminated = any(terminations.values())
@@ -440,6 +448,16 @@ class MAPPOTrainer:
         metrics = self.env.sim.metrics()
         total_peds = metrics.get("total", self.env.sim.num_evacuees)
         survival_rate = (metrics["evacuated"] / max(1, total_peds)) * 100.0
+        sampled_actions = np.concatenate(self.buffer.actions) if self.buffer.actions else np.array([])
+        standby_rate = float(
+            np.mean(sampled_actions == self.env.STANDBY_ACTION)
+        ) if sampled_actions.size else 0.0
+        dual_rate = float(
+            np.mean(sampled_actions > self.env.STANDBY_ACTION)
+        ) if sampled_actions.size else 0.0
+        safety_intervention_rate = total_safety_interventions / float(
+            max(1, step_count * self.num_agents)
+        )
 
         return {
             "episode": episode_idx,
@@ -455,6 +473,9 @@ class MAPPOTrainer:
             "hazard_type": hazard_type,
             "intensity": intensity,
             "dual": dual_injected,
+            "standby_rate": standby_rate,
+            "dual_action_rate": dual_rate,
+            "safety_intervention_rate": safety_intervention_rate,
             **update_metrics,
         }
 
@@ -472,7 +493,13 @@ class MAPPOTrainer:
         total_entropy = 0.0
         total_approx_kl = 0.0
         total_clip_fraction = 0.0
+        total_grad_norm = 0.0
+        optimizer_steps = 0
         samples_seen = 0
+        actor_before = [
+            parameter.detach().clone()
+            for parameter in self.policy.actor_mlp.parameters()
+        ]
 
         # Keep dropout disabled while retaining gradients. Otherwise old and new
         # log-probabilities differ even before an optimizer step.
@@ -556,8 +583,10 @@ class MAPPOTrainer:
 
                 self.optimizer.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(self.policy.parameters(), max_norm=0.5)
+                grad_norm = nn.utils.clip_grad_norm_(self.policy.parameters(), max_norm=0.5)
                 self.optimizer.step()
+                total_grad_norm += float(grad_norm)
+                optimizer_steps += 1
 
                 batch_size = len(batch_indices)
                 samples_seen += batch_size
@@ -570,12 +599,25 @@ class MAPPOTrainer:
                 ) * batch_size
 
         denom = max(1, samples_seen)
+        actor_parameter_delta = float(
+            torch.sqrt(
+                sum(
+                    torch.sum((parameter.detach() - before) ** 2)
+                    for parameter, before in zip(
+                        self.policy.actor_mlp.parameters(),
+                        actor_before,
+                    )
+                )
+            ).item()
+        )
         return {
             "pi_loss": round(total_pi_loss / denom, 4),
             "v_loss": round(total_v_loss / denom, 4),
             "entropy": round(total_entropy / denom, 4),
             "approx_kl": round(total_approx_kl / denom, 6),
             "clip_fraction": round(total_clip_fraction / denom, 4),
+            "grad_norm": round(total_grad_norm / max(1, optimizer_steps), 6),
+            "actor_parameter_delta": round(actor_parameter_delta, 8),
         }
 
     def train(self, num_episodes: int = 50):
@@ -623,7 +665,10 @@ class MAPPOTrainer:
                 f"R: {rew:6.2f} | "
                 f"Loss: (π={metrics['pi_loss']:.3f}, V={metrics['v_loss']:.3f}) | "
                 f"KL: {metrics.get('approx_kl', 0.0):.4f} | "
-                f"Clip: {metrics.get('clip_fraction', 0.0):.2f}"
+                f"H: {metrics.get('entropy', 0.0):.2f} | "
+                f"Δθ: {metrics.get('actor_parameter_delta', 0.0):.2e} | "
+                f"Dual: {100.0 * metrics.get('dual_action_rate', 0.0):4.1f}% | "
+                f"Standby: {100.0 * metrics.get('standby_rate', 0.0):4.1f}%"
             )
 
             # Compare only like-for-like curriculum maturity first. A high score
@@ -707,7 +752,7 @@ def run_benchmark(
       3. ST-TBA-GAT (Ours) (Decentralized Spatio-Temporal Bottleneck-Aware GAT)
     """
     print("\n" + "=" * 85)
-    print("📊 EMPIRICAL BENCHMARK: STATIC BASELINE vs CLASSICAL DIJKSTRA vs ST-TBA-GAT")
+    print("📊 CAUSAL BENCHMARK: BASELINES, ACTION ABLATIONS, AND ST-TBA-GAT")
     print(f"   Runs per condition: {num_runs} | Evacuees per run: {num_evacuees}")
     print("=" * 85)
 
@@ -727,6 +772,17 @@ def run_benchmark(
         print("   Using initialized ST-TBA-GAT model")
     policy.eval()
 
+    # Fixed random initialization provides a causal "architecture without
+    # learning" control under the same action masks and simulator physics.
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(1729)
+        untrained_policy = ST_TBA_GAT(
+            node_dim=env.obs_dim,
+            hidden_dim=64,
+            max_corridors=env.MAX_CORRIDORS,
+        ).to(device_obj)
+    untrained_policy.eval()
+
     edge_index = torch.tensor(env.edge_index, dtype=torch.long, device=device_obj)
 
     scenarios = [
@@ -737,7 +793,53 @@ def run_benchmark(
         {"node_id": "pipe_rack_junc_1", "hazard_type": "FIRE", "intensity": 0.95},
     ]
 
-    results = {"static": [], "dijkstra": [], "st_tba_gat": []}
+    results = {
+        "static": [],
+        "dijkstra": [],
+        "standby": [],
+        "random": [],
+        "untrained": [],
+        "st_tba_gat": [],
+    }
+
+    def run_marl_control(control: str, scen: Dict[str, Any], seed: int):
+        obs, _ = env.reset(seed=seed, options={**scen, "policy_mode": "marl"})
+        env.max_sim_time = min(240.0, 120.0 + 0.50 * num_evacuees)
+        hs = torch.zeros(len(env.agents), 64, device=device_obj)
+        rng = np.random.default_rng(seed + 10_000)
+        active_policy = untrained_policy if control == "untrained" else policy
+
+        while True:
+            masks_np = env.get_all_action_masks()
+            if control == "standby":
+                acts_np = np.full(
+                    len(env.agents),
+                    standby_action(env.MAX_CORRIDORS),
+                    dtype=np.int64,
+                )
+            elif control == "random":
+                acts_np = np.asarray(
+                    [int(rng.choice(np.flatnonzero(mask))) for mask in masks_np],
+                    dtype=np.int64,
+                )
+            else:
+                live_masks = torch.tensor(masks_np, dtype=torch.bool, device=device_obj)
+                obs_array = np.stack([obs[agent] for agent in env.agents])
+                nf = torch.tensor(obs_array, dtype=torch.float32, device=device_obj)
+                with torch.no_grad():
+                    acts_t, _, hs, _ = active_policy.act(
+                        node_features=nf,
+                        edge_index=edge_index,
+                        hidden_state=hs,
+                        action_masks=live_masks,
+                        deterministic=True,
+                    )
+                acts_np = acts_t.cpu().numpy()
+
+            act_dict = {agent: acts_np[i] for i, agent in enumerate(env.agents)}
+            obs, _, terms, truncs, _ = env.step(act_dict)
+            if any(terms.values()) or any(truncs.values()):
+                return env.sim.metrics()
 
     for run_idx in range(min(num_runs, len(scenarios))):
         scen = scenarios[run_idx]
@@ -747,7 +849,7 @@ def run_benchmark(
         # Static signage has no environmental sensing; paths never redirect around fire/gas
         env.reset(seed=seed, options={**scen, "policy_mode": "static"})
         env.max_sim_time = min(240.0, 120.0 + 0.50 * num_evacuees)
-        static_act = {a: env.MAX_CORRIDORS for a in env.agents}
+        static_act = {a: env.STANDBY_ACTION for a in env.agents}
         while True:
             _, _, terms, truncs, _ = env.step(static_act)
             if any(terms.values()) or any(truncs.values()):
@@ -783,13 +885,18 @@ def run_benchmark(
             signs = env.sim.compute_signboards()
             for agent in env.agents:
                 nbrs = env.agent_neighbors.get(agent, [])
-                chosen_k = env.MAX_CORRIDORS
+                chosen_action = env.STANDBY_ACTION
                 if agent in central_connected:
                     for s in signs.get(agent, []):
-                        if s.get("action") == "ARROW" and s.get("target") in nbrs:
-                            chosen_k = nbrs.index(s["target"])
+                        direction_slots = env.directional_neighbors.get(agent, ())
+                        if s.get("action") == "ARROW" and s.get("target") in direction_slots:
+                            direction_idx = direction_slots.index(s["target"])
+                            chosen_action = direction_mask_to_action(
+                                1 << direction_idx,
+                                env.MAX_CORRIDORS,
+                            )
                             break
-                dijk_act[agent] = chosen_k
+                dijk_act[agent] = chosen_action
 
             _, _, terms, truncs, _ = env.step(dijk_act)
             if any(terms.values()) or any(truncs.values()):
@@ -797,61 +904,75 @@ def run_benchmark(
         m_dijk = env.sim.metrics()
         results["dijkstra"].append(m_dijk)
 
-        # ── 3. ST-TBA-GAT (Ours - Decentralized Edge GAT + Reflexive Safety) ──
-        # Edge routers execute local 1-hop GAT inference and 20ms hardware reflexive safety override
-        obs, _ = env.reset(seed=seed, options={**scen, "policy_mode": "marl"})
-        env.max_sim_time = min(240.0, 120.0 + 0.50 * num_evacuees)
-        hs = torch.zeros(len(env.agents), 64, device=device_obj)
-        while True:
-            # Refresh live action masks dynamically as hazards diffuse through corridors
-            live_masks = torch.tensor(env.get_all_action_masks(), dtype=torch.bool, device=device_obj)
-            obs_array = np.stack([obs[agent] for agent in env.agents])
-            nf = torch.tensor(obs_array, dtype=torch.float32, device=device_obj)
-            with torch.no_grad():
-                acts_t, _, hs, _ = policy.act(
-                    node_features=nf,
-                    edge_index=edge_index,
-                    hidden_state=hs,
-                    action_masks=live_masks,
-                    deterministic=True,
-                )
-            acts_np = acts_t.cpu().numpy()
-            act_dict = {a: acts_np[i] for i, a in enumerate(env.agents)}
-            obs, _, terms, truncs, _ = env.step(act_dict)
-            if any(terms.values()) or any(truncs.values()):
-                break
-        m_gat = env.sim.metrics()
-        results["st_tba_gat"].append(m_gat)
+        # ── 3. Causal MARL controls and trained policy ────────────────────────
+        results["standby"].append(run_marl_control("standby", scen, seed))
+        results["random"].append(run_marl_control("random", scen, seed))
+        results["untrained"].append(run_marl_control("untrained", scen, seed))
+        results["st_tba_gat"].append(run_marl_control("trained", scen, seed))
 
     # Aggregate metrics
     def summarize(runs):
         surv = [r["evacuated"] / max(1, num_evacuees) * 100.0 for r in runs]
         cas = [r["casualties"] for r in runs]
+        unfinished = [
+            max(0, num_evacuees - r["evacuated"] - r["casualties"])
+            for r in runs
+        ]
+        adverse = [casualties + trapped for casualties, trapped in zip(cas, unfinished)]
         t = [r["sim_time"] for r in runs]
         return {
             "surv_mean": np.mean(surv),
             "surv_std": np.std(surv),
             "cas_mean": np.mean(cas),
             "cas_std": np.std(cas),
+            "unfinished_mean": np.mean(unfinished),
+            "unfinished_std": np.std(unfinished),
+            "adverse_mean": np.mean(adverse),
             "time_mean": np.mean(t),
             "time_std": np.std(t),
         }
 
-    s_stat = summarize(results["static"])
-    s_dijk = summarize(results["dijkstra"])
-    s_gat = summarize(results["st_tba_gat"])
+    summaries = {name: summarize(runs) for name, runs in results.items()}
+    s_stat = summaries["static"]
+    s_dijk = summaries["dijkstra"]
+    s_gat = summaries["st_tba_gat"]
 
-    print("\n" + "-" * 85)
-    print(f"{'METRIC':<25} | {'STATIC NFPA':<18} | {'CENTRALIZED DIJK':<18} | {'ST-TBA-GAT (OURS)':<18}")
-    print("-" * 85)
-    print(f"{'Survival Rate (%)':<25} | {s_stat['surv_mean']:5.1f} ± {s_stat['surv_std']:4.1f}%    | {s_dijk['surv_mean']:5.1f} ± {s_dijk['surv_std']:4.1f}%     | {s_gat['surv_mean']:5.1f} ± {s_gat['surv_std']:4.1f}%")
-    print(f"{'Casualties (count)':<25} | {s_stat['cas_mean']:5.1f} ± {s_stat['cas_std']:4.1f}      | {s_dijk['cas_mean']:5.1f} ± {s_dijk['cas_std']:4.1f}       | {s_gat['cas_mean']:5.1f} ± {s_gat['cas_std']:4.1f}")
-    print(f"{'Avg Egress Time (s)':<25} | {s_stat['time_mean']:5.1f} ± {s_stat['time_std']:4.1f}s     | {s_dijk['time_mean']:5.1f} ± {s_dijk['time_std']:4.1f}s      | {s_gat['time_mean']:5.1f} ± {s_gat['time_std']:4.1f}s")
-    print("-" * 85)
-    red_static = max(0.0, (s_stat['cas_mean'] - s_gat['cas_mean']) / max(1e-6, s_stat['cas_mean']) * 100.0)
-    red_central = max(0.0, (s_dijk['cas_mean'] - s_gat['cas_mean']) / max(1e-6, s_dijk['cas_mean']) * 100.0)
-    print(f"🌟 Relative Casualty Reduction vs Static NFPA:    {red_static:.1f}%")
-    print(f"🌟 Relative Casualty Reduction vs Centralized:    {red_central:.1f}%")
+    print("\n" + "-" * 110)
+    print(
+        f"{'CONTROLLER':<24} | {'EVACUATED (%)':>18} | {'CASUALTIES':>16} | "
+        f"{'UNFINISHED':>16} | {'TIME (s)':>16}"
+    )
+    print("-" * 110)
+    labels = {
+        "static": "STATIC NFPA",
+        "dijkstra": "CENTRALIZED DIJKSTRA",
+        "standby": "MARL ALWAYS STANDBY",
+        "random": "MARL RANDOM VALID",
+        "untrained": "UNTRAINED ST-TBA-GAT",
+        "st_tba_gat": "TRAINED ST-TBA-GAT",
+    }
+    for name in ("static", "dijkstra", "standby", "random", "untrained", "st_tba_gat"):
+        summary = summaries[name]
+        print(
+            f"{labels[name]:<24} | "
+            f"{summary['surv_mean']:6.1f} ± {summary['surv_std']:4.1f} | "
+            f"{summary['cas_mean']:6.1f} ± {summary['cas_std']:4.1f} | "
+            f"{summary['unfinished_mean']:6.1f} ± {summary['unfinished_std']:4.1f} | "
+            f"{summary['time_mean']:6.1f} ± {summary['time_std']:4.1f}"
+        )
+    print("-" * 110)
+    red_static = (
+        (s_stat["adverse_mean"] - s_gat["adverse_mean"])
+        / max(1e-6, s_stat["adverse_mean"])
+        * 100.0
+    )
+    red_central = (
+        (s_dijk["adverse_mean"] - s_gat["adverse_mean"])
+        / max(1e-6, s_dijk["adverse_mean"])
+        * 100.0
+    )
+    print(f"Relative adverse-outcome reduction vs Static NFPA: {red_static:+.1f}%")
+    print(f"Relative adverse-outcome reduction vs Centralized: {red_central:+.1f}%")
     print("=" * 85 + "\n")
 
 

@@ -392,12 +392,12 @@ class ActorExport(nn.Module):
         )
         return logits, next_hidden, self.policy.forward_critic(next_hidden)
 
-# 2. Trace a 36-node graph: 51 features and 9 choices (8 directions + standby)
+# 2. Trace a 36-node graph: 51 features and 37 zero/one/two-direction choices
 export_model = ActorExport(model)
 dummy_feat = torch.randn(36, 51)
 dummy_edge = torch.tensor([[0, 1], [1, 0]], dtype=torch.long)
 dummy_hidden = torch.zeros(36, 64)
-dummy_mask = torch.ones(36, 9, dtype=torch.bool)
+dummy_mask = torch.ones(36, 37, dtype=torch.bool)
 
 # 3. Export to optimized ONNX graph
 torch.onnx.export(

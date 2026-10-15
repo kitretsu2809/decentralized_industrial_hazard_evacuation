@@ -1,6 +1,7 @@
 import unittest
 import numpy as np
 from simulator.env.evacuation_env import IndustrialEvacuationEnv
+from core.policy.routing_actions import direction_mask_to_action
 
 class TestIndustrialEvacuationEnv(unittest.TestCase):
     def setUp(self):
@@ -15,23 +16,25 @@ class TestIndustrialEvacuationEnv(unittest.TestCase):
             obs_space = self.env.observation_spaces[agent]
             act_space = self.env.action_spaces[agent]
             self.assertEqual(obs_space.shape, (51,))
-            self.assertEqual(act_space.n, 9)
+            self.assertEqual(act_space.n, 37)
 
     def test_reset(self):
         obs, infos = self.env.reset(seed=123)
         self.assertEqual(len(obs), 36)
         self.assertEqual(len(infos), 36)
+        self.assertEqual(self.env.sim.policy_mode, "marl")
+        self.assertTrue(self.env.sim._externally_controlled_signboards)
 
         for agent in self.env.agents:
             self.assertEqual(obs[agent].shape, (51,))
             self.assertIn("action_mask", infos[agent])
             mask = infos[agent]["action_mask"]
-            self.assertEqual(len(mask), 9)
+            self.assertEqual(len(mask), 37)
 
     def test_step_execution(self):
         obs, infos = self.env.reset(seed=456)
         actions = {
-            agent: np.random.randint(0, 9)
+            agent: np.random.randint(0, 37)
             for agent in self.env.agents
         }
         next_obs, rewards, terminations, truncations, next_infos = self.env.step(actions)
@@ -48,7 +51,7 @@ class TestIndustrialEvacuationEnv(unittest.TestCase):
 
     def test_action_masking(self):
         all_masks = self.env.get_all_action_masks()
-        self.assertEqual(all_masks.shape, (36, 9))
+        self.assertEqual(all_masks.shape, (36, 37))
         # Every agent has at least standby at index 8.
         self.assertTrue(np.all(all_masks.sum(axis=1) >= 1))
 
@@ -112,6 +115,48 @@ class TestIndustrialEvacuationEnv(unittest.TestCase):
                 self.env.sim.get_next_waypoint(u, floor=1),
                 self.env.directional_neighbors[u][direction_idx],
             )
+
+    def test_standby_does_not_invoke_hidden_static_routing(self):
+        self.env.reset(options={"inject": False})
+        node = "pipe_rack_junc_1"
+        self.env.sim.policy_mode = "marl"
+        self.env.sim.set_signboard_actions(
+            {node: np.zeros(self.env.MAX_CORRIDORS, dtype=np.int64)}
+        )
+        self.assertIsNone(self.env.sim.get_next_waypoint(node, floor=1))
+
+    def test_dual_action_really_splits_pedestrians(self):
+        self.env.reset(options={"inject": False})
+        node = "pipe_rack_junc_1"
+        slots = self.env.directional_neighbors[node]
+        selected = [index for index, neighbor in enumerate(slots) if neighbor][:2]
+        signs = np.zeros(self.env.MAX_CORRIDORS, dtype=np.int64)
+        signs[selected] = 3
+        self.env.sim.policy_mode = "marl"
+        self.env.sim.set_signboard_actions({node: signs})
+
+        first = self.env.sim.get_next_waypoint(node, floor=1, agent_id=0)
+        second = self.env.sim.get_next_waypoint(node, floor=1, agent_id=1)
+        self.assertEqual(first, slots[selected[0]])
+        self.assertEqual(second, slots[selected[1]])
+        self.assertNotEqual(first, second)
+
+    def test_action_mask_is_safety_only_not_an_exit_distance_expert(self):
+        self.env.reset(options={"inject": False})
+        node = "pipe_rack_junc_1"
+        slots = self.env.directional_neighbors[node]
+        physical = [
+            index
+            for index, neighbor in enumerate(slots)
+            if neighbor and not ("hoist" in node and "hoist" in neighbor)
+        ]
+        farthest = max(physical, key=lambda index: self.env.exit_dists[slots[index]])
+        mask = self.env.get_action_mask(node)
+        self.assertTrue(mask[direction_mask_to_action(1 << farthest)])
+
+        first, second = physical[:2]
+        dual_action = direction_mask_to_action((1 << first) | (1 << second))
+        self.assertTrue(mask[dual_action])
 
     def test_iso_13571_fed_accumulation(self):
         """Verifies cumulative FED dose accumulation and casualty trigger."""
@@ -184,7 +229,7 @@ class TestIndustrialEvacuationEnv(unittest.TestCase):
             "cluster_node": "pipe_rack_junc_1",
             "cluster_ratio": 0.80,
         })
-        actions = {agent: 6 for agent in self.env.agents}  # standby actions
+        actions = {agent: self.env.STANDBY_ACTION for agent in self.env.agents}
         _, rewards, _, _, _ = self.env.step(actions)
         # Verify team reward evaluates without NaN or Inf
         rew = rewards[self.env.agents[0]]
@@ -200,15 +245,15 @@ class TestIndustrialEvacuationEnv(unittest.TestCase):
         })
         target = "reactor_2"
         self.env.observed_crowd_deltas[target] = 0.50
-        actions = {agent: self.env.MAX_CORRIDORS for agent in self.env.agents}
-        actions[target] = 0
+        actions = {agent: self.env.STANDBY_ACTION for agent in self.env.agents}
+        actions[target] = direction_mask_to_action(1 << 0)
         _, _, _, _, infos = self.env.step(actions)
         self.assertEqual(infos[target]["flipping_penalty"], 0.0)
 
         # With no observed hazard/crowd change, another arrow flip is penalized.
         self.env.observed_hazard_deltas = {agent: 0.0 for agent in self.env.agents}
         self.env.observed_crowd_deltas = {agent: 0.0 for agent in self.env.agents}
-        actions[target] = 1
+        actions[target] = direction_mask_to_action(1 << 1)
         _, _, _, _, infos = self.env.step(actions)
         self.assertEqual(infos[target]["flipping_penalty"], 1.0)
 
@@ -274,7 +319,7 @@ class TestIndustrialEvacuationEnv(unittest.TestCase):
         u_act = self.env.directional_neighbors[u].index(v)
         v_act = self.env.directional_neighbors[v].index(u)
 
-        actions = {agent: self.env.MAX_CORRIDORS for agent in self.env.agents}
+        actions = {agent: self.env.STANDBY_ACTION for agent in self.env.agents}
         actions[u] = u_act
         actions[v] = v_act
 

@@ -20,6 +20,11 @@ import torch.nn.functional as F
 from torch.distributions.categorical import Categorical
 
 from core.graph.directions import MAX_DIRECTIONS
+from core.policy.routing_actions import (
+    num_routing_actions,
+    routing_action_masks,
+    standby_action,
+)
 
 
 DEFAULT_NODE_DIM = 11 + MAX_DIRECTIONS * 5
@@ -146,9 +151,9 @@ class ReflexiveSafetyOverride:
     """
     Deterministic Hardware Reflexive Safety Override.
     Emulates the dedicated analog/FPGA life-safety interlock on edge nodes:
-      If local hazard score H_v >= theta_crit (0.80) or downstream corridor is lethal,
-      the corridor state is strictly clamped to BLOCK (action=2, Red X) within < 20 ms,
-      guaranteeing zero trapped evacuees regardless of neural network outputs.
+      If a downstream corridor is lethal, that corridor is strictly clamped to
+      BLOCK (action=2, Red X) within < 20 ms. A hazardous current room does not
+      block every exit from that room; safe outward corridors remain available.
       If downstream corridor has hazard >= theta_warn (0.30), ARROW (action=3) or NORMAL (0)
       is demoted to CAUTION (action=1, Amber Detour).
     """
@@ -173,9 +178,9 @@ class ReflexiveSafetyOverride:
         """
         overridden = actions.clone()
         # 1. Critical danger -> strictly force BLOCK (action=2, Red X)
-        crit_local = (node_hazards.squeeze(-1) >= cls.THETA_CRIT).unsqueeze(-1)
+        del node_hazards
         crit_neighbor = neighbor_hazards >= cls.THETA_CRIT
-        must_block = crit_local | crit_neighbor
+        must_block = crit_neighbor
         overridden = torch.where(
             must_block,
             torch.tensor(cls.BLOCKED, device=actions.device, dtype=actions.dtype),
@@ -219,9 +224,22 @@ class ST_TBA_GAT(nn.Module):
         self.node_dim = node_dim
         self.hidden_dim = hidden_dim
         self.max_corridors = max_corridors
-        self.NUM_ACTIONS = max_corridors + 1  # 0..max_corridors-1: corridor arrows, max_corridors: standby
+        self.NUM_ACTIONS = num_routing_actions(max_corridors)
+        self.STANDBY_ACTION = standby_action(max_corridors)
         self.gat_heads = gat_heads
         self.gat_layers = gat_layers
+        action_direction_bits = torch.tensor(
+            [
+                [(mask >> index) & 1 for index in range(max_corridors)]
+                for mask in routing_action_masks(max_corridors)
+            ],
+            dtype=torch.bool,
+        )
+        self.register_buffer(
+            "_action_direction_bits",
+            action_direction_bits,
+            persistent=False,
+        )
 
         # ── 1. Spatial GAT Encoder ──────────────────────────────────────────
         head_dim = hidden_dim // gat_heads
@@ -247,7 +265,7 @@ class ST_TBA_GAT(nn.Module):
         self.gru = nn.GRUCell(hidden_dim, hidden_dim)
 
         # ── 3. Decentralized Actor Heads ────────────────────────────────────
-        # Predicts primary exit corridor direction (0..K-1) or standby (K)
+        # Predicts standby, one arrow, or a pair of arrows for learned splitting.
         self.actor_mlp = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
@@ -256,9 +274,9 @@ class ST_TBA_GAT(nn.Module):
             nn.Linear(hidden_dim // 2, self.NUM_ACTIONS),
         )
         with torch.no_grad():
-            bias = torch.zeros(self.NUM_ACTIONS)
-            bias[:-1] = 0.5   # Exploration incentive across valid corridors
-            bias[-1] = 0.0    # Neutral standby
+            bias = torch.full((self.NUM_ACTIONS,), -1.5)
+            bias[:max_corridors] = 0.25
+            bias[self.STANDBY_ACTION] = -0.75
             self.actor_mlp[-1].bias.copy_(bias)
 
         # ── 4. Centralized Critic Head (CTDE) ───────────────────────────────
@@ -294,7 +312,8 @@ class ST_TBA_GAT(nn.Module):
         """
         Computes actor logits for all agents and updates recurrent state.
         Returns:
-          logits: (N, max_corridors + 1), for eight directions plus standby
+          logits: (N, NUM_ACTIONS), covering standby plus all valid one- and
+            two-direction commands
           new_hidden_state: (N, hidden_dim)
         """
         N = node_features.size(0)
@@ -337,13 +356,15 @@ class ST_TBA_GAT(nn.Module):
         node_hazards: torch.Tensor,
         neighbor_hazards: torch.Tensor,
     ) -> torch.Tensor:
-        """Masks unsafe corridor directions so policy never points evacuees toward danger."""
+        """Mask any one/dual-arrow command containing a critical neighbour."""
         constrained = logits.clone()
-        crit_local = node_hazards.squeeze(-1) >= ReflexiveSafetyOverride.THETA_CRIT
-        for k in range(self.max_corridors):
-            crit_nbr = neighbor_hazards[:, k] >= ReflexiveSafetyOverride.THETA_CRIT
-            must_block = crit_local | crit_nbr
-            constrained[must_block, k] = -1e9
+        del node_hazards  # A hazardous room must still allow escape to safe neighbours.
+        unsafe_directions = neighbor_hazards >= ReflexiveSafetyOverride.THETA_CRIT
+        invalid_actions = (
+            unsafe_directions.unsqueeze(1)
+            & self._action_direction_bits.unsqueeze(0)
+        ).any(dim=-1)
+        constrained = constrained.masked_fill(invalid_actions, -1e9)
         return constrained
 
     def forward_critic(

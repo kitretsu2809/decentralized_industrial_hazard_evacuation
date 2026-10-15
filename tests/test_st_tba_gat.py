@@ -33,7 +33,7 @@ class TestSTTBAGATPolicy(unittest.TestCase):
         )
 
         self.assertEqual(actions.shape, (self.num_nodes,))
-        self.assertTrue(torch.all((actions >= 0) & (actions < 9)))
+        self.assertTrue(torch.all((actions >= 0) & (actions < 37)))
         self.assertEqual(log_probs.shape, (self.num_nodes,))
         self.assertEqual(h_new.shape, (self.num_nodes, self.hidden_dim))
         self.assertEqual(val.shape, (1,))
@@ -49,8 +49,8 @@ class TestSTTBAGATPolicy(unittest.TestCase):
 
         overridden = ReflexiveSafetyOverride.apply(actions, node_hazards, neighbor_hazards)
 
-        # Node 5 all corridors must be forced to BLOCK (2)
-        self.assertTrue(torch.all(overridden[5] == 2))
+        # A hazardous current room must retain safe outward escape corridors.
+        self.assertTrue(torch.all(overridden[5] == 0))
         # Node 10 corridor 2 must be forced to BLOCK (2)
         self.assertEqual(overridden[10, 2].item(), 2)
         # Node 0 corridor 0 should remain ALLOW (0)
@@ -59,7 +59,7 @@ class TestSTTBAGATPolicy(unittest.TestCase):
     def test_evaluate_actions_and_backprop(self):
         x = torch.randn(self.num_nodes, self.node_dim)
         h = torch.zeros(self.num_nodes, self.hidden_dim)
-        actions = torch.randint(0, 9, (self.num_nodes,))
+        actions = torch.randint(0, 37, (self.num_nodes,))
 
         values, log_probs, entropy = self.model.evaluate_actions(
             node_features=x,
@@ -92,7 +92,7 @@ class TestSTTBAGATPolicy(unittest.TestCase):
         model = ST_TBA_GAT()
         self.assertEqual(model.node_dim, 51)
         self.assertEqual(model.max_corridors, 8)
-        self.assertEqual(model.NUM_ACTIONS, 9)
+        self.assertEqual(model.NUM_ACTIONS, 37)
 
 if __name__ == "__main__":
     unittest.main()

@@ -18,6 +18,11 @@ from .dijkstra_router import DijkstraRouter
 from .social_force import SocialForceModel
 from core.communication.hazard_packet import HazardPacket32, unpack_hazard_packet
 from core.graph.directions import DIRECTION_NAMES, MAX_DIRECTIONS, assign_direction_slots
+from core.policy.routing_actions import (
+    action_to_direction_mask,
+    num_routing_actions,
+    valid_actions_for_direction_mask,
+)
 
 
 def _build_adjacency_with_dist(edge_list):
@@ -179,18 +184,23 @@ class Simulation:
                     edges.append([u_idx, v_idx])
             self._policy_edge_index = torch.tensor(edges, dtype=torch.long).t()
             self._policy_action_masks = torch.zeros(
-                len(self.sorted_nodes), MAX_DIRECTIONS + 1, dtype=torch.bool
+                len(self.sorted_nodes), num_routing_actions(MAX_DIRECTIONS), dtype=torch.bool
             )
             for idx, nid in enumerate(self.sorted_nodes):
                 direction_slots = self.directional_neighbors[nid]
+                available_direction_mask = 0
                 for k, nbr in enumerate(direction_slots):
                     if nbr is None:
                         continue
                     is_hoist = "hoist" in nid and "hoist" in nbr
-                    is_dead_end = len(self.agent_neighbors.get(nbr, [])) <= 1 and nbr not in self.exits
-                    if not is_hoist and not is_dead_end:
-                        self._policy_action_masks[idx, k] = True
-                self._policy_action_masks[idx, MAX_DIRECTIONS] = True
+                    if not is_hoist:
+                        available_direction_mask |= 1 << k
+                self._policy_action_masks[idx] = torch.from_numpy(
+                    valid_actions_for_direction_mask(
+                        available_direction_mask,
+                        MAX_DIRECTIONS,
+                    )
+                )
 
             directional_ckpt = os.environ.get(
                 "ST_TBA_GAT_CHECKPOINT",
@@ -206,11 +216,14 @@ class Simulation:
                     if (
                         self.policy_model.max_corridors != MAX_DIRECTIONS
                         or self.policy_model.node_dim != expected_node_dim
+                        or self.policy_model.NUM_ACTIONS != num_routing_actions(MAX_DIRECTIONS)
                     ):
                         raise ValueError(
-                            "checkpoint uses the retired six-corridor layout; "
+                            "checkpoint uses a retired routing-action layout; "
                             f"expected node_dim={expected_node_dim}, "
-                            f"max_corridors={MAX_DIRECTIONS}. Retrain MAPPO."
+                            f"max_corridors={MAX_DIRECTIONS}, "
+                            f"num_actions={num_routing_actions(MAX_DIRECTIONS)}. "
+                            "Retrain MAPPO."
                         )
                     self.policy_checkpoint_meta = payload.get("extra_meta", {}) or {}
                     self.policy_checkpoint = os.path.relpath(ckpt_path, _REPO)
@@ -235,11 +248,18 @@ class Simulation:
             self.policy_ready = False
             self.policy_load_error = f"Policy runtime unavailable: {e}"
 
-    def set_policy_mode(self, mode: str):
+    def set_policy_mode(self, mode: str, externally_controlled: bool = False):
+        """Select routing mode.
+
+        ``externally_controlled`` is used by the PettingZoo training environment,
+        whose sampled action is the MARL controller. Interactive simulator use
+        keeps the default and therefore still refuses AI mode without a verified
+        local checkpoint.
+        """
         if mode not in ("dijkstra", "marl", "static"):
             return False
 
-        if mode == "marl":
+        if mode == "marl" and not externally_controlled:
             if self.policy_model is None:
                 self._init_policy()
             if not self.policy_ready or self.policy_model is None:
@@ -249,9 +269,12 @@ class Simulation:
 
         self.policy_mode = mode
         if mode == "marl":
-            self._externally_controlled_signboards = False
-            self._reset_policy_memory()
-            self._refresh_live_policy_actions(force=True)
+            self._externally_controlled_signboards = externally_controlled
+            if externally_controlled:
+                self.signboard_actions = {}
+            else:
+                self._reset_policy_memory()
+                self._refresh_live_policy_actions(force=True)
         if mode == "static":
             self.policy_multipliers = {}
             self.router.update_weights({}, set())  # Reset to static geometric distance
@@ -338,8 +361,6 @@ class Simulation:
         if self.policy_mode == "marl":
             acts = self.signboard_actions.get(current_node, None)
             green_corridors = []
-            amber_corridors = []
-            normal_corridors = []
 
             for k, nbr in enumerate(self.directional_neighbors.get(current_node, ())):
                 if nbr is None:
@@ -347,8 +368,7 @@ class Simulation:
                 act_code = int(acts[k]) if (acts is not None and k < len(acts)) else 0
                 hn = self.hazard.levels.get(nbr, 0.0)
                 is_blocked = (
-                    current_node in self.hazard.blocked
-                    or nbr in self.hazard.blocked
+                    nbr in self.hazard.blocked
                     or act_code == 2
                     or hn >= 0.80
                     or ("hoist" in current_node and "hoist" in nbr)  # Elevators/hoists de-energized during emergency
@@ -360,93 +380,18 @@ class Simulation:
                 # GREEN_ARROW is the controller's direct route command.
                 if act_code == 3:
                     green_corridors.append(nbr)
-                elif act_code == 1:
-                    amber_corridors.append(nbr)
-                else:
-                    normal_corridors.append(nbr)
 
-            def _is_dead_end(node: str) -> bool:
-                return len(self.agent_neighbors.get(node, [])) <= 1 and node not in self.exits
-
-            # 1. Prioritize designated green arrow corridors moving forward (away from prev_node)
-            forward_green = [nbr for nbr in green_corridors if nbr != prev_node and not _is_dead_end(nbr)]
-            if not forward_green:
-                forward_green = [nbr for nbr in green_corridors if nbr != prev_node]
-            chosen_green = forward_green if forward_green else [nbr for nbr in green_corridors if not _is_dead_end(nbr)]
-            if not chosen_green:
-                chosen_green = green_corridors
-
-            if chosen_green:
-                for nbr in chosen_green:
+            if green_corridors:
+                for nbr in green_corridors:
                     if nbr in self.exits:
                         return nbr
 
-                # Dynamic Flow Splitting:
-                # If multiple green corridors are designated, partition arriving evacuees proportionally
-                if len(chosen_green) > 1:
-                    return chosen_green[agent_id % len(chosen_green)]
+                # Dual arrows are a policy decision. Split deterministically so
+                # repeated simulations with the same seed remain reproducible.
+                return green_corridors[agent_id % len(green_corridors)]
 
-                primary = chosen_green[0]
-
-                # Check downstream bottleneck crowding at primary corridor
-                primary_cap = max(1, self.node_capacities.get(primary, 10))
-                primary_occ = 0
-                for p in self.agents:
-                    if p.state.value in ("moving", "reacting", "danger", "rerouting"):
-                        if p.current_node == primary or (p.path and p.path[0] == primary):
-                            primary_occ += 1
-
-                # If primary is jammed (density >= 0.50 of capacity) and a safe forward alternative exists:
-                curr_dist = self.static_exit_dists.get(current_node, 50.0)
-                forward_alts = [
-                    nbr for nbr in (normal_corridors + amber_corridors)
-                    if nbr != prev_node and nbr != primary and not _is_dead_end(nbr)
-                    and self.hazard.levels.get(nbr, 0.0) < 0.30
-                    and self.static_exit_dists.get(nbr, 50.0) <= curr_dist + 5.0
-                ]
-                if forward_alts and (primary_occ / float(primary_cap)) >= 0.50:
-                    # Dynamically divert 50% of incoming arrivals to the uncongested parallel corridor
-                    if agent_id % 2 == 1:
-                        return forward_alts[0]
-
-                return primary
-
-            # 2. Dynamic green absent: NFPA 101 / OSHA standard static emergency exit signage fallback
-            # In standby mode, illuminated signboards display the default static exit corridor.
-            static_p = self._static_paths.get(current_node, [])
-            static_next = static_p[1] if len(static_p) >= 2 else None
-            open_corridors = normal_corridors + amber_corridors
-
-            if (
-                static_next
-                and static_next in open_corridors
-                and static_next != prev_node
-                and self.hazard.levels.get(static_next, 0.0) < 0.30
-            ):
-                return static_next
-
-            # 3. Static path blocked or hazardous: advance along best forward downhill corridor
-            forward_open = [nbr for nbr in open_corridors if nbr != prev_node and not _is_dead_end(nbr)]
-            if forward_open:
-                for nbr in forward_open:
-                    if nbr in self.exits:
-                        return nbr
-                curr_dist = self.static_exit_dists.get(current_node, 50.0)
-                downhill = [
-                    nbr for nbr in forward_open
-                    if self.static_exit_dists.get(nbr, 50.0) <= curr_dist + 5.0
-                ]
-                if downhill:
-                    return downhill[agent_id % len(downhill)]
-                # If all downhill paths blocked by hazard, detour via shortest reachable corridor
-                return min(forward_open, key=lambda n: self.static_exit_dists.get(n, 999.0))
-
-            # 4. Only backtrack if at an absolute dead-end with zero forward unblocked corridors
-            if open_corridors:
-                for nbr in open_corridors:
-                    if nbr in self.exits:
-                        return nbr
-                return min(open_corridors, key=lambda n: self.static_exit_dists.get(n, 999.0))
+            # Standby means no learned instruction. Static/Dijkstra fallbacks are
+            # separate benchmark modes and must not solve the MARL task.
             return None
 
         # ── 2. STATIC NFPA MODE: Fixed geometric signs ───────────────────
@@ -758,9 +703,9 @@ class Simulation:
                 )
                 if not is_edge_blk and self.policy_mode == "marl":
                     acts = self.signboard_actions.get(agent.current_node)
-                    nbrs = self.agent_neighbors.get(agent.current_node, [])
-                    if acts is not None and target_id in nbrs:
-                        k = nbrs.index(target_id)
+                    direction_slots = self.directional_neighbors.get(agent.current_node, ())
+                    if acts is not None and target_id in direction_slots:
+                        k = direction_slots.index(target_id)
                         if int(acts[k]) == 2:  # Corridor explicitly blocked by safety interlock
                             is_edge_blk = True
 
@@ -997,62 +942,16 @@ class Simulation:
                 act_k = int(actions_np[idx]) if actions_np.ndim == 1 else int(actions_np[idx, 0])
                 direction_slots = self.directional_neighbors.get(node_id, ())
                 phys_act = np.zeros(MAX_DIRECTIONS, dtype=np.int64)
-                loc_h = self.hazard.levels.get(node_id, 0.0)
-
-                arrow_idx = None
-                if act_k < len(direction_slots) and direction_slots[act_k] is not None:
-                    nbr = direction_slots[act_k]
-                    nbr_h = self.hazard.levels.get(nbr, 0.0)
-                    is_dead_end = len(self.agent_neighbors.get(nbr, [])) <= 1 and nbr not in self.exits
-                    is_hoist = "hoist" in node_id and "hoist" in nbr
-                    if loc_h < 0.80 and nbr_h < 0.80 and not is_dead_end and not is_hoist:
-                        arrow_idx = act_k
-
-                # When alarm is active, ensure every controller shows an authoritative exit route
-                if self.alarm_active and arrow_idx is None and node_id not in self.exits:
-                    safe_nbrs = []
-                    for c_idx, neighbour in enumerate(direction_slots):
-                        if neighbour is None:
-                            continue
-                        nbr_h = self.hazard.levels.get(neighbour, 0.0)
-                        is_dead_end = len(self.agent_neighbors.get(neighbour, [])) <= 1 and neighbour not in self.exits
-                        is_hoist = "hoist" in node_id and "hoist" in neighbour
-                        if loc_h < 0.80 and nbr_h < 0.80 and not is_dead_end and not is_hoist:
-                            safe_nbrs.append((c_idx, neighbour))
-                    if safe_nbrs:
-                        best_c_idx, _ = min(safe_nbrs, key=lambda pair: self.static_exit_dists.get(pair[1], 999.0))
-                        arrow_idx = best_c_idx
-
-                arrow_indices = set()
-                if arrow_idx is not None:
-                    arrow_indices.add(arrow_idx)
-
-                # Density-aware secondary flow-splitting arrow:
-                # If primary corridor is crowded (density >= 40%), illuminate an alternative safe forward corridor
-                if arrow_idx is not None and sum(n is not None for n in direction_slots) > 1:
-                    primary_nbr = direction_slots[arrow_idx]
-                    p_occ = sum(1 for p in self.agents if p.current_node == primary_nbr and p.state.value in ("moving", "reacting", "danger", "rerouting"))
-                    p_cap = max(1, self.node_capacities.get(primary_nbr, 10))
-                    if (p_occ / float(p_cap)) >= 0.40:
-                        for c_idx, neighbour in enumerate(direction_slots):
-                            if neighbour is None:
-                                continue
-                            if c_idx != arrow_idx:
-                                nbr_h = self.hazard.levels.get(neighbour, 0.0)
-                                is_dead_end = len(self.agent_neighbors.get(neighbour, [])) <= 1 and neighbour not in self.exits
-                                is_hoist = "hoist" in node_id and "hoist" in neighbour
-                                if loc_h < 0.80 and nbr_h < 0.30 and not is_dead_end and not is_hoist:
-                                    arrow_indices.add(c_idx)
-                                    break
+                selected_mask = action_to_direction_mask(act_k, MAX_DIRECTIONS)
 
                 for c_idx, neighbour in enumerate(direction_slots):
                     if neighbour is None:
                         continue
                     nbr_h = self.hazard.levels.get(neighbour, 0.0)
                     is_hoist = "hoist" in node_id and "hoist" in neighbour
-                    if loc_h >= 0.80 or nbr_h >= 0.80 or is_hoist:
+                    if nbr_h >= 0.80 or is_hoist:
                         phys_act[c_idx] = 2  # BLOCKED
-                    elif c_idx in arrow_indices:
+                    elif selected_mask & (1 << c_idx):
                         phys_act[c_idx] = 3  # ARROW
                     elif nbr_h >= 0.30:
                         phys_act[c_idx] = 1  # CAUTION (moderate smoke/hazard)

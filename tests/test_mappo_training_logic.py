@@ -56,7 +56,7 @@ class TestMAPPOTrainingLogic(unittest.TestCase):
             edges.extend([[idx, (idx + 1) % num_nodes], [(idx + 1) % num_nodes, idx]])
         edge_index = torch.tensor(edges, dtype=torch.long).t()
         hidden = torch.zeros(num_nodes, 64)
-        masks = torch.ones(num_nodes, 9, dtype=torch.bool)
+        masks = torch.ones(num_nodes, 37, dtype=torch.bool)
 
         with torch.no_grad():
             actions, rollout_log_probs, _, _ = model.act(
