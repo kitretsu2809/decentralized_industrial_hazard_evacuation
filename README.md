@@ -47,8 +47,8 @@ In petrochemical complexes, offshore platforms, and hazardous processing plants,
 ### The Decentralized Edge Approach
 
 Each **edge sign router** (ESP32 / Jetson Nano class embedded hardware) operates autonomously:
-1. **Local GAT-GRU Inference**: Spatio-Temporal Graph Attention Network (`ST_TBA_GAT`) processing 41-dimensional local and 1-hop topological observations.
-2. **4-Byte Sparse Delta Gossip**: Broadcasts `[Node ID | ΔH | Δρ | Status]` only when sensor differentials exceed physical significance thresholds ($\Delta H \ge 0.15$ or $\Delta \rho \ge 0.25$). Neural embeddings are never transmitted over wireless links.
+1. **Local GAT-GRU Inference**: Spatio-Temporal Graph Attention Network (`ST_TBA_GAT`) processing 51-dimensional local and eight-direction topological observations.
+2. **32-Bit Hazard Gossip**: Broadcasts an exact four-byte PDU containing an 8-bit connected-direction mask, 8-bit hazard, 8-bit crowd density, 4-bit hazard type, 2-bit protocol version, and 2-bit TTL. Neural embeddings are never transmitted over wireless links.
 3. **Reflexive Hardware Safety Override**: Deterministic analog interlock: if local or neighbor hazard $H_v \ge 0.80$, the corridor is physically blocked (Red X) in $< 20\text{ ms}$, overriding software actions.
 4. **Dynamic Flow Splitting & Dual Arrow Guidance**: When a primary corridor approaches capacity ($\rho \ge 50\%$), the signboard automatically splits arriving pedestrians across parallel alternative corridors and illuminates dual green directional arrows on the digital twin canvas.
 
@@ -102,9 +102,9 @@ The MARL team reward actively optimizes flow distribution and punishes crowding 
 │  └──────────────┘   └──────────────────────────┘   └─────────────────┘ │
 │                                │                              │          │
 │                    ┌───────────▼────────────┐      ┌──────────▼────────┐│
-│                    │ 4-BYTE DELTA GOSSIP     │      │ DUAL GREEN ARROW  ││
-│                    │ [Node ID|ΔH|Δρ|Status] │      │ FLOW-SPLITTING    ││
-│                    │ Broadcast only if Δ>ε   │      │ Divides parallel  ││
+│                    │ 32-BIT HAZARD GOSSIP    │      │ DUAL GREEN ARROW  ││
+│                    │ [Dir|Hazard|Crowd|Meta] │      │ FLOW-SPLITTING    ││
+│                    │ Eight direction bits    │      │ Divides parallel  ││
 │                    │ Zero neural embeddings  │      │ crowd streams     ││
 │                    └────────────────────────┘      └───────────────────┘│
 └─────────────────────────────────────────────────────────────────────────┘
