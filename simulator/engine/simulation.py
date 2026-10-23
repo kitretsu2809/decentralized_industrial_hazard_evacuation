@@ -1146,17 +1146,26 @@ class Simulation:
     def metrics(self):
         counts = {s: 0 for s in PedestrianState}
         for a in self.agents: counts[a.state] += 1
+        total = len(self.agents)
+        evac = counts[PedestrianState.EVACUATED]
+        cas = counts[PedestrianState.CASUALTY]
+        in_transit = max(0, total - evac - cas)
+        survival_rate = round((max(0, total - cas) / max(1, total)) * 100.0, 1)
+        clearance_rate = round((evac / max(1, total)) * 100.0, 1)
         return {
-            "total":        len(self.agents),
-            "normal":       counts[PedestrianState.NORMAL],
-            "reacting":     counts[PedestrianState.REACTING],
-            "moving":       counts[PedestrianState.MOVING],
-            "rerouting":    counts[PedestrianState.REROUTING],
-            "in_danger":    counts[PedestrianState.DANGER],
-            "evacuated":    counts[PedestrianState.EVACUATED],
-            "casualties":   counts[PedestrianState.CASUALTY],
-            "alarm_active": self.alarm_active,
-            "sim_time":     round(self.t, 1),
+            "total":          total,
+            "normal":         counts[PedestrianState.NORMAL],
+            "reacting":       counts[PedestrianState.REACTING],
+            "moving":         counts[PedestrianState.MOVING],
+            "rerouting":      counts[PedestrianState.REROUTING],
+            "in_danger":      counts[PedestrianState.DANGER],
+            "evacuated":      evac,
+            "casualties":     cas,
+            "in_transit":     in_transit,
+            "survival_rate":  survival_rate,
+            "clearance_rate": clearance_rate,
+            "alarm_active":   self.alarm_active,
+            "sim_time":       round(self.t, 1),
         }
 
     def building_dict(self):

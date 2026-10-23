@@ -33,6 +33,52 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 
+class ValueStandardizer:
+    """
+    Running mean and variance standardizer for value targets (PopArt-style normalization).
+    Normalizes targets to mean 0, variance 1 to stabilize value loss gradients
+    across changing crowd sizes and disaster intensities.
+    """
+    def __init__(self, clip_val: float = 10.0, eps: float = 1e-5):
+        self.clip_val = clip_val
+        self.eps = eps
+        self.mean = 0.0
+        self.var = 1.0
+        self.count = 1e-4
+
+    def update(self, values: np.ndarray | torch.Tensor):
+        if isinstance(values, torch.Tensor):
+            values = values.detach().cpu().numpy()
+        flat = np.asarray(values, dtype=np.float64).flatten()
+        if len(flat) == 0:
+            return
+        batch_mean = float(np.mean(flat))
+        batch_var = float(np.var(flat))
+        batch_count = float(len(flat))
+
+        delta = batch_mean - self.mean
+        tot_count = self.count + batch_count
+        new_mean = self.mean + delta * batch_count / tot_count
+        m_a = self.var * self.count
+        m_b = batch_var * batch_count
+        m2 = m_a + m_b + (delta ** 2) * self.count * batch_count / tot_count
+        new_var = m2 / max(1.0, tot_count)
+
+        self.mean = new_mean
+        self.var = max(1e-4, new_var)
+        self.count = tot_count
+
+    def normalize(self, x: torch.Tensor | np.ndarray) -> torch.Tensor | np.ndarray:
+        std = (self.var + self.eps) ** 0.5
+        if isinstance(x, torch.Tensor):
+            return torch.clamp((x - self.mean) / std, -self.clip_val, self.clip_val)
+        return np.clip((x - self.mean) / std, -self.clip_val, self.clip_val)
+
+    def denormalize(self, x: torch.Tensor | float) -> torch.Tensor | float:
+        std = (self.var + self.eps) ** 0.5
+        return x * std + self.mean
+
+
 class RolloutBuffer:
     """Stores transitions for MAPPO policy and value updates."""
     def __init__(self, num_agents: int, obs_dim: int, max_corridors: int, hidden_dim: int):
@@ -53,6 +99,7 @@ class RolloutBuffer:
         # True only for an MDP terminal state. Time-limit/stagnation truncations
         # must bootstrap from the critic instead of being treated as terminal.
         self.terminals: List[bool] = []            # scalar
+        self.teacher_actions: List[np.ndarray] = []  # (N,)
 
     def add(
         self,
@@ -64,6 +111,7 @@ class RolloutBuffer:
         reward: float,
         value: float,
         terminated: bool,
+        teacher_actions: Optional[np.ndarray] = None,
     ):
         self.node_features.append(node_features)
         self.hidden_states.append(hidden_states)
@@ -73,6 +121,8 @@ class RolloutBuffer:
         self.rewards.append(reward)
         self.values.append(value)
         self.terminals.append(terminated)
+        if teacher_actions is not None:
+            self.teacher_actions.append(teacher_actions)
 
     def compute_returns_and_advantages(
         self,
@@ -171,6 +221,7 @@ class MAPPOTrainer:
         self.buffer = RolloutBuffer(
             self.num_agents, self.obs_dim, self.max_corridors, self.hidden_dim
         )
+        self.value_normalizer = ValueStandardizer()
 
     def _resume_policy(self, checkpoint_path: str):
         """Restores a compatible policy and continues after its saved episode.
@@ -226,13 +277,121 @@ class MAPPOTrainer:
         return 4
 
     @staticmethod
-    def _checkpoint_rank(metrics: Dict[str, Any]) -> Tuple[int, float, float]:
+    def _checkpoint_rank(metrics: Dict[str, Any]) -> Tuple[int, float, float, float]:
         """Ranks comparable training checkpoints without favoring easy stages."""
         return (
             int(metrics.get("curriculum_stage", 0)),
             float(metrics.get("survival_rate", 0.0)),
+            float(metrics.get("clearance_rate", 0.0)),
             float(metrics.get("reward", float("-inf"))),
         )
+
+    def compute_teacher_actions(self, masks_np: np.ndarray) -> np.ndarray:
+        """
+        Generates congestion-aware, hazard-weighted teacher actions for all agents.
+        Uses shortest path over dynamic hazard-and-congestion weighted graph.
+        """
+        import networkx as nx
+        hazard_levels = self.env.sim.hazard.levels
+        blocked = self.env.sim.hazard.blocked
+
+        # Local crowd counts
+        node_counts = {nid: 0 for nid in self.env.agents}
+        for ped in self.env.sim.agents:
+            if ped.state not in (PedestrianState.EVACUATED, PedestrianState.CASUALTY):
+                if ped.current_node in node_counts:
+                    node_counts[ped.current_node] += 1
+
+        G = self.env.sim.router.G
+        exit_paths = {}
+        if G is not None:
+            # Dynamically weigh edges with hazard and congestion penalty
+            for u, v, data in G.edges(data=True):
+                base_dist = data.get("distance", 10.0)
+                h = max(hazard_levels.get(u, 0.0), hazard_levels.get(v, 0.0))
+                if u in blocked or v in blocked or h >= 0.80:
+                    w = 1e9
+                else:
+                    cap_u = max(1, self.env.sim.node_capacities.get(u, 10))
+                    cap_v = max(1, self.env.sim.node_capacities.get(v, 10))
+                    cong = max(node_counts.get(u, 0) / cap_u, node_counts.get(v, 0) / cap_v)
+                    w = base_dist * (1.0 + 10.0 * h + 3.0 * min(2.0, cong))
+                G[u][v]["weight"] = w
+
+            try:
+                exit_paths = nx.multi_source_dijkstra_path(
+                    G, self.env.sim.exits, weight="weight"
+                )
+            except Exception:
+                exit_paths = {}
+
+        teacher_actions = np.zeros(self.num_agents, dtype=np.int64)
+        for i, agent in enumerate(self.env.agents):
+            direction_slots = self.env.directional_neighbors.get(agent, ())
+            chosen_action = self.env.STANDBY_ACTION
+            if agent in exit_paths and len(exit_paths[agent]) >= 2:
+                next_hop = exit_paths[agent][-2]
+                if next_hop in direction_slots:
+                    k = direction_slots.index(next_hop)
+                    cand_act = direction_mask_to_action(1 << k, self.max_corridors)
+                    if masks_np[i, cand_act]:
+                        chosen_action = cand_act
+
+            # Fallback if preferred action masked
+            if not masks_np[i, chosen_action]:
+                valid_indices = np.flatnonzero(masks_np[i])
+                chosen_action = int(valid_indices[0]) if len(valid_indices) > 0 else self.env.STANDBY_ACTION
+
+            teacher_actions[i] = chosen_action
+
+        return teacher_actions
+
+    def evaluate_canonical(self) -> Dict[str, float]:
+        """Runs fixed 3-scenario benchmark suite to evaluate policy without curriculum bias."""
+        canonical_scenarios = [
+            {"node_id": "reactor_2", "hazard_type": "FIRE", "intensity": 0.85, "num_evacuees": 150},
+            {"node_id": "pipe_rack_junc_1", "hazard_type": "GAS_RELEASE", "intensity": 0.90, "num_evacuees": 200},
+            {"node_id": "stair_north_f1", "hazard_type": "FIRE", "intensity": 0.90, "num_evacuees": 250},
+        ]
+        survs = []
+        clears = []
+        cass = []
+        times = []
+
+        for idx, scen in enumerate(canonical_scenarios):
+            obs, _ = self.env.reset(seed=42 + idx, options={**scen, "policy_mode": "marl"})
+            hs = torch.zeros(self.num_agents, self.hidden_dim, device=self.device)
+            while True:
+                obs_array = np.stack([obs[agent] for agent in self.env.agents])
+                nf = torch.tensor(obs_array, dtype=torch.float32, device=self.device)
+                masks_np = self.env.get_all_action_masks()
+                masks_t = torch.tensor(masks_np, dtype=torch.bool, device=self.device)
+                with torch.no_grad():
+                    acts_t, _, hs, _ = self.policy.act(
+                        node_features=nf,
+                        edge_index=self.edge_index,
+                        hidden_state=hs,
+                        action_masks=masks_t,
+                        deterministic=True,
+                    )
+                acts_np = acts_t.cpu().numpy()
+                act_dict = {agent: acts_np[i] for i, agent in enumerate(self.env.agents)}
+                obs, _, terms, truncs, _ = self.env.step(act_dict)
+                if any(terms.values()) or any(truncs.values()):
+                    break
+            m = self.env.sim.metrics()
+            tot = m.get("total", scen["num_evacuees"])
+            survs.append(m.get("survival_rate", (tot - m["casualties"]) / max(1, tot) * 100.0))
+            clears.append(m.get("clearance_rate", m["evacuated"] / max(1, tot) * 100.0))
+            cass.append(m["casualties"])
+            times.append(m["sim_time"])
+
+        return {
+            "val_survival_rate": round(float(np.mean(survs)), 1),
+            "val_clearance_rate": round(float(np.mean(clears)), 1),
+            "val_casualties": round(float(np.mean(cass)), 1),
+            "val_sim_time": round(float(np.mean(times)), 1),
+        }
 
     def train_episode(self, episode_idx: int) -> Dict[str, float]:
         """Runs a single episode rollout and performs PPO update."""
@@ -394,8 +553,11 @@ class MAPPOTrainer:
 
             actions_np = actions_t.cpu().numpy()
             log_probs_np = log_probs_t.cpu().numpy()
-            val_scalar = float(val_t.cpu().item())
+            val_scalar = float(self.value_normalizer.denormalize(float(val_t.cpu().item())))
             old_hidden_np = hidden_state.cpu().numpy()
+
+            # Generate congestion-aware, hazard-weighted teacher actions for auxiliary guidance
+            teacher_act_np = self.compute_teacher_actions(masks_np)
 
             # Execute environment step
             action_dict = {
@@ -420,6 +582,7 @@ class MAPPOTrainer:
                 reward=reward,
                 value=val_scalar,
                 terminated=terminated,
+                teacher_actions=teacher_act_np,
             )
 
             total_reward += reward
@@ -437,17 +600,31 @@ class MAPPOTrainer:
                 obs_array = np.stack([obs[agent] for agent in self.env.agents])
                 nf = torch.tensor(obs_array, dtype=torch.float32, device=self.device)
                 _, _, _, v = self.policy.act(nf, self.edge_index, hidden_state)
-                last_val = float(v.cpu().item())
+                last_val = float(self.value_normalizer.denormalize(float(v.cpu().item())))
 
         returns, advantages = self.buffer.compute_returns_and_advantages(
             last_value=last_val, gamma=self.gamma, gae_lambda=self.gae_lambda
         )
 
-        update_metrics = self._update_ppo(returns, advantages)
+        # Update running value target standardizer (PopArt normalization)
+        self.value_normalizer.update(returns)
+
+        update_metrics = self._update_ppo(returns, advantages, tau=tau)
 
         metrics = self.env.sim.metrics()
         total_peds = metrics.get("total", self.env.sim.num_evacuees)
-        survival_rate = (metrics["evacuated"] / max(1, total_peds)) * 100.0
+        survival_rate = metrics.get(
+            "survival_rate",
+            (total_peds - metrics["casualties"]) / max(1, total_peds) * 100.0,
+        )
+        clearance_rate = metrics.get(
+            "clearance_rate",
+            (metrics["evacuated"] / max(1, total_peds)) * 100.0,
+        )
+        in_transit = metrics.get(
+            "in_transit",
+            max(0, total_peds - metrics["evacuated"] - metrics["casualties"]),
+        )
         sampled_actions = np.concatenate(self.buffer.actions) if self.buffer.actions else np.array([])
         standby_rate = float(
             np.mean(sampled_actions == self.env.STANDBY_ACTION)
@@ -466,7 +643,9 @@ class MAPPOTrainer:
             "total": total_peds,
             "evacuated": metrics["evacuated"],
             "casualties": metrics["casualties"],
+            "in_transit": in_transit,
             "survival_rate": round(survival_rate, 1),
+            "clearance_rate": round(clearance_rate, 1),
             "sim_time": metrics["sim_time"],
             "stage_name": stage_name,
             "curriculum_stage": curriculum_stage,
@@ -479,18 +658,27 @@ class MAPPOTrainer:
             **update_metrics,
         }
 
-    def _update_ppo(self, returns: np.ndarray, advantages: np.ndarray) -> Dict[str, float]:
-        """Performs clipped PPO actor updates with a robust critic objective."""
+    def _update_ppo(
+        self,
+        returns: np.ndarray,
+        advantages: np.ndarray,
+        tau: float = 1.0,
+    ) -> Dict[str, float]:
+        """Performs clipped PPO actor updates with active-agent weighting and PopArt normalization."""
         T = len(returns)
         if T == 0:
-            return {"loss": 0.0, "pi_loss": 0.0, "v_loss": 0.0, "entropy": 0.0}
+            return {"loss": 0.0, "pi_loss": 0.0, "v_loss": 0.0, "entropy": 0.0, "teacher_loss": 0.0}
 
         ret_t = torch.tensor(returns, dtype=torch.float32, device=self.device)
         adv_t = torch.tensor(advantages, dtype=torch.float32, device=self.device)
 
+        # Decay teacher imitation schedule: beta = 0.50 * max(0.0, 1.0 - tau)
+        beta_teacher = 0.50 * max(0.0, 1.0 - tau)
+
         total_pi_loss = 0.0
         total_v_loss = 0.0
         total_entropy = 0.0
+        total_teacher_loss = 0.0
         total_approx_kl = 0.0
         total_clip_fraction = 0.0
         total_grad_norm = 0.0
@@ -512,6 +700,7 @@ class MAPPOTrainer:
                 batch_pi_losses = []
                 batch_v_losses = []
                 batch_entropies = []
+                batch_teacher_losses = []
                 batch_kls = []
                 batch_clip_fractions = []
 
@@ -541,13 +730,21 @@ class MAPPOTrainer:
                         device=self.device,
                     )
 
-                    val_pred, new_lp, entropy = self.policy.evaluate_actions(
+                    val_pred, new_lp, entropy, logits = self.policy.evaluate_actions(
                         node_features=nf,
                         edge_index=self.edge_index,
                         hidden_state=hs,
                         actions=act,
                         action_masks=masks_t,
+                        return_logits=True,
                     )
+
+                    # Active-agent policy gradient weighting:
+                    # Idle nodes (no hazard, no crowd) contribute lower variance to update
+                    h_node = nf[:, 0]
+                    rho_node = nf[:, 1]
+                    active_weight = torch.clamp(h_node * 2.0 + rho_node * 2.0, min=0.15, max=1.0)
+                    weight_sum = active_weight.sum().clamp(min=1e-5)
 
                     # Each router shares the cooperative team advantage at this step.
                     log_ratio = new_lp - old_lp
@@ -558,12 +755,14 @@ class MAPPOTrainer:
                     surr2 = torch.clamp(
                         ratio, 1.0 - self.clip_ratio, 1.0 + self.clip_ratio
                     ) * adv
-                    batch_pi_losses.append(-torch.min(surr1, surr2).mean())
+                    per_agent_pi_loss = -torch.min(surr1, surr2)
+                    weighted_pi_loss = (per_agent_pi_loss * active_weight).sum() / weight_sum
+                    batch_pi_losses.append(weighted_pi_loss)
 
-                    # Huber loss keeps large early-episode return errors from
-                    # overwhelming the actor through shared encoder gradients.
+                    # PopArt-style standardized return target
+                    norm_ret = self.value_normalizer.normalize(ret_t[t])
                     batch_v_losses.append(
-                        F.smooth_l1_loss(val_pred.squeeze(), ret_t[t])
+                        F.smooth_l1_loss(val_pred.squeeze(), norm_ret)
                     )
                     batch_entropies.append(entropy.mean())
                     batch_kls.append(((ratio - 1.0) - log_ratio).mean())
@@ -571,14 +770,29 @@ class MAPPOTrainer:
                         ((ratio - 1.0).abs() > self.clip_ratio).float().mean()
                     )
 
+                    # Auxiliary Teacher Guidance cross-entropy loss
+                    if len(self.buffer.teacher_actions) > t and beta_teacher > 0.0:
+                        teacher_act = torch.tensor(
+                            self.buffer.teacher_actions[t], dtype=torch.long, device=self.device
+                        )
+                        teacher_ce = F.cross_entropy(logits, teacher_act, reduction="none")
+                        batch_teacher_losses.append(
+                            (teacher_ce * active_weight).sum() / weight_sum
+                        )
+
                 pi_loss = torch.stack(batch_pi_losses).mean()
                 v_loss = torch.stack(batch_v_losses).mean()
                 entropy_mean = torch.stack(batch_entropies).mean()
+                if batch_teacher_losses:
+                    teacher_loss = torch.stack(batch_teacher_losses).mean()
+                else:
+                    teacher_loss = torch.tensor(0.0, device=self.device)
 
                 loss = (
                     pi_loss
                     + self.value_coef * v_loss
                     - self.entropy_coef * entropy_mean
+                    + beta_teacher * teacher_loss
                 )
 
                 self.optimizer.zero_grad()
@@ -593,6 +807,7 @@ class MAPPOTrainer:
                 total_pi_loss += float(pi_loss.item()) * batch_size
                 total_v_loss += float(v_loss.item()) * batch_size
                 total_entropy += float(entropy_mean.item()) * batch_size
+                total_teacher_loss += float(teacher_loss.item()) * batch_size
                 total_approx_kl += float(torch.stack(batch_kls).mean().item()) * batch_size
                 total_clip_fraction += float(
                     torch.stack(batch_clip_fractions).mean().item()
@@ -614,6 +829,7 @@ class MAPPOTrainer:
             "pi_loss": round(total_pi_loss / denom, 4),
             "v_loss": round(total_v_loss / denom, 4),
             "entropy": round(total_entropy / denom, 4),
+            "teacher_loss": round(total_teacher_loss / denom, 4),
             "approx_kl": round(total_approx_kl / denom, 6),
             "clip_fraction": round(total_clip_fraction / denom, 4),
             "grad_norm": round(total_grad_norm / max(1, optimizer_steps), 6),
@@ -630,10 +846,10 @@ class MAPPOTrainer:
             print(f"   Resuming from episode {self.start_episode}: {self.resume_checkpoint}")
         print("=" * 80 + "\n")
 
-        best_rank: Tuple[int, float, float] = (
+        best_rank: Tuple[int, float, float, float] = (
             self._checkpoint_rank(self.resume_metrics)
             if self.resume_metrics
-            else (-1, float("-inf"), float("-inf"))
+            else (-1, float("-inf"), float("-inf"), float("-inf"))
         )
 
         for ep in range(self.start_episode, num_episodes + 1):
@@ -642,12 +858,13 @@ class MAPPOTrainer:
             dt = time.time() - t0
 
             surv = metrics["survival_rate"]
+            clear = metrics["clearance_rate"]
             rew = metrics["reward"]
             cas = metrics["casualties"]
             evac = metrics["evacuated"]
             total = metrics.get("total", evac + cas)
             sim_t = metrics.get("sim_time", 0.0)
-            in_transit = max(0, total - evac - cas)
+            in_transit = metrics.get("in_transit", max(0, total - evac - cas))
 
             stage_str = metrics.get("stage_name", "Curriculum").split(":")[0]
             haz_str = metrics.get("hazard_type", "HAZ")[:4]
@@ -659,11 +876,11 @@ class MAPPOTrainer:
                 f"N: {total:3d} | "
                 f"Haz: {haz_str}{dual_str} ({int_val:.2f}) | "
                 f"Evac: {evac:3d} | Cas: {cas:2d} | In-Trans: {in_transit:2d} | "
-                f"Surv: {surv:5.1f}% | "
+                f"Surv: {surv:5.1f}% | Clear: {clear:5.1f}% | "
                 f"Sim: {sim_t:4.1f}s | "
                 f"Wall: {dt:4.1f}s | "
                 f"R: {rew:6.2f} | "
-                f"Loss: (π={metrics['pi_loss']:.3f}, V={metrics['v_loss']:.3f}) | "
+                f"Loss: (π={metrics['pi_loss']:.3f}, V={metrics['v_loss']:.3f}, T={metrics.get('teacher_loss', 0.0):.3f}) | "
                 f"KL: {metrics.get('approx_kl', 0.0):.4f} | "
                 f"H: {metrics.get('entropy', 0.0):.2f} | "
                 f"Δθ: {metrics.get('actor_parameter_delta', 0.0):.2e} | "
@@ -733,6 +950,17 @@ class MAPPOTrainer:
                 except Exception:
                     pass
 
+            # Periodic canonical validation check (every 5 episodes and final episode)
+            if ep % 5 == 0 or ep == num_episodes:
+                val_res = self.evaluate_canonical()
+                print(
+                    f"   ⭐ [CANONICAL EVAL Ep {ep:3d}] "
+                    f"Surv: {val_res['val_survival_rate']:5.1f}% | "
+                    f"Clear: {val_res['val_clearance_rate']:5.1f}% | "
+                    f"Cas: {val_res['val_casualties']:4.1f} | "
+                    f"Time: {val_res['val_sim_time']:4.1f}s"
+                )
+
         print("\n" + "=" * 80)
         print(f"✅ TRAINING FINISHED! Best checkpoint rank: {best_rank}")
         print(f"   Checkpoint saved to: {os.path.join(self.save_dir, 'best_policy.pt')}")
@@ -795,7 +1023,9 @@ def run_benchmark(
 
     results = {
         "static": [],
-        "dijkstra": [],
+        "dijkstra_ideal": [],
+        "dijkstra_severed": [],
+        "dijkstra_hazard": [],
         "standby": [],
         "random": [],
         "untrained": [],
@@ -841,50 +1071,38 @@ def run_benchmark(
             if any(terms.values()) or any(truncs.values()):
                 return env.sim.metrics()
 
-    for run_idx in range(min(num_runs, len(scenarios))):
-        scen = scenarios[run_idx]
-        seed = 100 + run_idx
-
-        # ── 1. Static NFPA Baseline ───────────────────────────────────────────
-        # Static signage has no environmental sensing; paths never redirect around fire/gas
-        env.reset(seed=seed, options={**scen, "policy_mode": "static"})
-        env.max_sim_time = min(240.0, 120.0 + 0.50 * num_evacuees)
-        static_act = {a: env.STANDBY_ACTION for a in env.agents}
-        while True:
-            _, _, terms, truncs, _ = env.step(static_act)
-            if any(terms.values()) or any(truncs.values()):
-                break
-        m_stat = env.sim.metrics()
-        results["static"].append(m_stat)
-
-        # ── 2. Classical Centralized Dijkstra ─────────────────────────────────
-        # Centralized SCADA host at control_room; subject to 25% communication link severance
+    def run_dijkstra_variant(variant: str, scen: Dict[str, Any], seed: int):
+        import networkx as nx
         env.reset(seed=seed, options={**scen, "policy_mode": "dijkstra"})
         env.max_sim_time = min(240.0, 120.0 + 0.50 * num_evacuees)
-        rng = random.Random(seed)
         edges = list(env.sim.router.G.edges())
-        # In an industrial disaster, cables incident to the ignition node burn out,
-        # plus 15% random infrastructure link failures across the facility:
-        severed_links = {e for e in edges if scen["node_id"] in e}
-        severed_links.update(rng.sample(edges, int(len(edges) * 0.15)))
-        
-        # Determine nodes with active connection to central host (control_room)
-        import networkx as nx
-        comm_net = nx.Graph()
-        for u, v in edges:
-            if (u, v) not in severed_links and (v, u) not in severed_links:
-                comm_net.add_edge(u, v)
-        central_connected = (
-            nx.node_connected_component(comm_net, "control_room")
-            if "control_room" in comm_net else set()
-        )
+        if variant == "ideal":
+            central_connected = set(env.sim.router.G.nodes())
+        else:
+            rng = random.Random(seed)
+            severed_links = {e for e in edges if scen["node_id"] in e}
+            severed_links.update(rng.sample(edges, int(len(edges) * 0.15)))
+            comm_net = nx.Graph()
+            for u, v in edges:
+                if (u, v) not in severed_links and (v, u) not in severed_links:
+                    comm_net.add_edge(u, v)
+            central_connected = (
+                nx.node_connected_component(comm_net, "control_room")
+                if "control_room" in comm_net else set()
+            )
         env.sim.active_comm_nodes = central_connected
 
         while True:
+            if variant == "hazard":
+                # Dynamically reweight graph with real-time hazard levels
+                env.sim.router.update_weights(
+                    env.sim.hazard.levels,
+                    env.sim.hazard.blocked,
+                    active_nodes=central_connected,
+                )
             dijk_act = {}
             signs = env.sim.compute_signboards()
             for agent in env.agents:
-                nbrs = env.agent_neighbors.get(agent, [])
                 chosen_action = env.STANDBY_ACTION
                 if agent in central_connected:
                     for s in signs.get(agent, []):
@@ -901,8 +1119,28 @@ def run_benchmark(
             _, _, terms, truncs, _ = env.step(dijk_act)
             if any(terms.values()) or any(truncs.values()):
                 break
-        m_dijk = env.sim.metrics()
-        results["dijkstra"].append(m_dijk)
+        return env.sim.metrics()
+
+    for run_idx in range(min(num_runs, len(scenarios))):
+        scen = scenarios[run_idx]
+        seed = 100 + run_idx
+
+        # ── 1. Static NFPA Baseline ───────────────────────────────────────────
+        # Static signage has no environmental sensing; paths never redirect around fire/gas
+        env.reset(seed=seed, options={**scen, "policy_mode": "static"})
+        env.max_sim_time = min(240.0, 120.0 + 0.50 * num_evacuees)
+        static_act = {a: env.STANDBY_ACTION for a in env.agents}
+        while True:
+            _, _, terms, truncs, _ = env.step(static_act)
+            if any(terms.values()) or any(truncs.values()):
+                break
+        m_stat = env.sim.metrics()
+        results["static"].append(m_stat)
+
+        # ── 2. Dijkstra Baselines (Ideal, Severed, and Hazard-Weighted) ────────
+        results["dijkstra_ideal"].append(run_dijkstra_variant("ideal", scen, seed))
+        results["dijkstra_severed"].append(run_dijkstra_variant("severed", scen, seed))
+        results["dijkstra_hazard"].append(run_dijkstra_variant("hazard", scen, seed))
 
         # ── 3. Causal MARL controls and trained policy ────────────────────────
         results["standby"].append(run_marl_control("standby", scen, seed))
@@ -912,10 +1150,12 @@ def run_benchmark(
 
     # Aggregate metrics
     def summarize(runs):
-        surv = [r["evacuated"] / max(1, num_evacuees) * 100.0 for r in runs]
+        total = float(num_evacuees)
+        surv = [r.get("survival_rate", (total - r["casualties"]) / max(1.0, total) * 100.0) for r in runs]
+        clear = [r.get("clearance_rate", r["evacuated"] / max(1.0, total) * 100.0) for r in runs]
         cas = [r["casualties"] for r in runs]
         unfinished = [
-            max(0, num_evacuees - r["evacuated"] - r["casualties"])
+            r.get("in_transit", max(0, total - r["evacuated"] - r["casualties"]))
             for r in runs
         ]
         adverse = [casualties + trapped for casualties, trapped in zip(cas, unfinished)]
@@ -923,6 +1163,8 @@ def run_benchmark(
         return {
             "surv_mean": np.mean(surv),
             "surv_std": np.std(surv),
+            "clear_mean": np.mean(clear),
+            "clear_std": np.std(clear),
             "cas_mean": np.mean(cas),
             "cas_std": np.std(cas),
             "unfinished_mean": np.mean(unfinished),
@@ -934,33 +1176,45 @@ def run_benchmark(
 
     summaries = {name: summarize(runs) for name, runs in results.items()}
     s_stat = summaries["static"]
-    s_dijk = summaries["dijkstra"]
+    s_dijk = summaries["dijkstra_severed"]
     s_gat = summaries["st_tba_gat"]
 
-    print("\n" + "-" * 110)
+    print("\n" + "-" * 115)
     print(
-        f"{'CONTROLLER':<24} | {'EVACUATED (%)':>18} | {'CASUALTIES':>16} | "
-        f"{'UNFINISHED':>16} | {'TIME (s)':>16}"
+        f"{'CONTROLLER':<26} | {'SURVIVAL (%)':>14} | {'CLEARANCE (%)':>14} | "
+        f"{'CASUALTIES':>12} | {'IN-TRANSIT':>12} | {'TIME (s)':>12}"
     )
-    print("-" * 110)
+    print("-" * 115)
     labels = {
         "static": "STATIC NFPA",
-        "dijkstra": "CENTRALIZED DIJKSTRA",
+        "dijkstra_ideal": "IDEAL DIJKSTRA (100% COMM)",
+        "dijkstra_severed": "SEVERED DIJKSTRA (LINK-CUT)",
+        "dijkstra_hazard": "HAZARD-WEIGHTED DIJKSTRA",
         "standby": "MARL ALWAYS STANDBY",
         "random": "MARL RANDOM VALID",
         "untrained": "UNTRAINED ST-TBA-GAT",
-        "st_tba_gat": "TRAINED ST-TBA-GAT",
+        "st_tba_gat": "TRAINED ST-TBA-GAT (OURS)",
     }
-    for name in ("static", "dijkstra", "standby", "random", "untrained", "st_tba_gat"):
+    for name in (
+        "static",
+        "dijkstra_ideal",
+        "dijkstra_severed",
+        "dijkstra_hazard",
+        "standby",
+        "random",
+        "untrained",
+        "st_tba_gat",
+    ):
         summary = summaries[name]
         print(
-            f"{labels[name]:<24} | "
-            f"{summary['surv_mean']:6.1f} ± {summary['surv_std']:4.1f} | "
-            f"{summary['cas_mean']:6.1f} ± {summary['cas_std']:4.1f} | "
-            f"{summary['unfinished_mean']:6.1f} ± {summary['unfinished_std']:4.1f} | "
-            f"{summary['time_mean']:6.1f} ± {summary['time_std']:4.1f}"
+            f"{labels[name]:<26} | "
+            f"{summary['surv_mean']:5.1f} ± {summary['surv_std']:4.1f} | "
+            f"{summary['clear_mean']:5.1f} ± {summary['clear_std']:4.1f} | "
+            f"{summary['cas_mean']:4.1f} ± {summary['cas_std']:3.1f} | "
+            f"{summary['unfinished_mean']:4.1f} ± {summary['unfinished_std']:3.1f} | "
+            f"{summary['time_mean']:5.1f} ± {summary['time_std']:4.1f}"
         )
-    print("-" * 110)
+    print("-" * 115)
     red_static = (
         (s_stat["adverse_mean"] - s_gat["adverse_mean"])
         / max(1e-6, s_stat["adverse_mean"])
@@ -971,8 +1225,18 @@ def run_benchmark(
         / max(1e-6, s_dijk["adverse_mean"])
         * 100.0
     )
-    print(f"Relative adverse-outcome reduction vs Static NFPA: {red_static:+.1f}%")
-    print(f"Relative adverse-outcome reduction vs Centralized: {red_central:+.1f}%")
+    cas_red_static = (
+        (s_stat["cas_mean"] - s_gat["cas_mean"])
+        / max(1e-6, s_stat["cas_mean"])
+        * 100.0
+    )
+    cas_red_central = (
+        (s_dijk["cas_mean"] - s_gat["cas_mean"])
+        / max(1e-6, s_dijk["cas_mean"])
+        * 100.0
+    )
+    print(f"Casualty reduction vs Static NFPA: {cas_red_static:+.1f}% | Adverse outcome reduction: {red_static:+.1f}%")
+    print(f"Casualty reduction vs Severed Dijkstra: {cas_red_central:+.1f}% | Adverse outcome reduction: {red_central:+.1f}%")
     print("=" * 85 + "\n")
 
 

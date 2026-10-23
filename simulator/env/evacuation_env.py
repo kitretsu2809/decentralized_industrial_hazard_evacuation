@@ -296,6 +296,18 @@ class IndustrialEvacuationEnv(ParallelEnv):
 
         return obs_dict
 
+    def _pedestrian_exit_distance(self, p: Pedestrian) -> float:
+        """Computes continuous Euclidean + topological distance to safety."""
+        if p.state == PedestrianState.EVACUATED:
+            return 0.0
+        if p.state == PedestrianState.CASUALTY:
+            return float(self.exit_dists.get(p.current_node, 50.0))
+        if p.target_node and p.target_node in self.sim.node_positions:
+            tx, ty = self.sim.node_positions[p.target_node]
+            d_to_target = math.hypot(p.x - tx, p.y - ty)
+            return float(d_to_target + self.exit_dists.get(p.target_node, 50.0))
+        return float(self.exit_dists.get(p.current_node, 50.0))
+
     def step(
         self,
         actions: Dict[str, Any],
@@ -360,9 +372,9 @@ class IndustrialEvacuationEnv(ParallelEnv):
         # Update local signboard actions directly in the simulation engine.
         self.sim.set_signboard_actions(safe_actions, externally_controlled=True)
 
-        # Track active pedestrian exit distances BEFORE advancing physics
+        # Track active pedestrian continuous exit distances BEFORE advancing physics
         dist_before = {
-            p.id: self.exit_dists.get(p.current_node, 50.0)
+            p.id: self._pedestrian_exit_distance(p)
             for p in self.sim.agents
             if p.state not in (PedestrianState.EVACUATED, PedestrianState.CASUALTY)
         }
@@ -372,15 +384,17 @@ class IndustrialEvacuationEnv(ParallelEnv):
         for _ in range(ticks):
             self.sim._tick()
 
-        # Track active pedestrian exit distances AFTER advancing physics
+        # Track active pedestrian continuous exit distances AFTER advancing physics
         progress_sum = 0.0
+        active_speeds = []
         for pid, d_start in dist_before.items():
             ped = self.sim.agents[pid]
             if ped.state == PedestrianState.EVACUATED:
                 progress_sum += d_start  # Reached exit, completed all remaining distance
             elif ped.state != PedestrianState.CASUALTY:
-                d_end = self.exit_dists.get(ped.current_node, 50.0)
+                d_end = self._pedestrian_exit_distance(ped)
                 progress_sum += (d_start - d_end)
+                active_speeds.append(math.hypot(ped.vx, ped.vy))
 
         active_count = max(1, len(dist_before))
         r_progress = float(np.clip(progress_sum / (active_count * self.DECISION_DT * 1.34), -1.5, 1.5))
@@ -419,10 +433,14 @@ class IndustrialEvacuationEnv(ParallelEnv):
         total_finished = evac_now + cas_now
         is_terminated = (total_finished >= self.sim.num_evacuees)
 
-        # Stagnation early-stopping: if no progress for 30s while people remain in-transit
-        # (grace window of 40s allows distant occupants to walk from upper floors/wings)
-        if total_finished > self.last_progress_finished:
-            self.last_progress_finished = total_finished
+        # Stagnation early-stopping: only triggers if occupants are truly motionless / blocked
+        # (e.g. mean speed < 0.20 m/s and zero forward progress for 30s)
+        mean_speed = float(np.mean(active_speeds)) if active_speeds else 0.0
+        is_making_progress = (progress_sum > 0.05 * active_count * self.DECISION_DT) or (mean_speed > 0.20)
+
+        if total_finished > self.last_progress_finished or is_making_progress:
+            if total_finished > self.last_progress_finished:
+                self.last_progress_finished = total_finished
             self.stagnation_timer = 0.0
         elif in_transit > 0:
             self.stagnation_timer += self.DECISION_DT
@@ -432,8 +450,9 @@ class IndustrialEvacuationEnv(ParallelEnv):
 
         # In-transit urgency penalty: gentle per-step nudging to evacuate quickly
         urgency_penalty = 0.01 * (float(in_transit) / float(n_total))
-        # Watchdog / Stagnation trapped penalty: assessed once when episode truncates or stagnates with trapped occupants
-        trapped_penalty = (self.weights["cas"] * (float(in_transit) / float(n_total))) if is_truncated and in_transit > 0 else 0.0
+        # Watchdog / Stagnation trapped penalty: only assess penalty on actual STAGNATION (paralysis/choke).
+        # Normal watchdog timeout bootstraps future value from the critic via GAE.
+        trapped_penalty = (self.weights["cas"] * (float(in_transit) / float(n_total))) if is_stagnated and in_transit > 0 else 0.0
 
         # Graph-level Topological Cycle & Reachability Analysis
         G_arrow = nx.DiGraph()
@@ -442,11 +461,20 @@ class IndustrialEvacuationEnv(ParallelEnv):
             if agent in self.sim.exits:
                 continue
             direction_slots = self.directional_neighbors.get(agent, ())
+            has_green = False
             for k, code in enumerate(act_vec):
                 if code == 3 and k < len(direction_slots) and direction_slots[k] is not None:
                     nbr = direction_slots[k]
                     if self.sim.hazard.levels.get(agent, 0.0) < 0.80 and self.sim.hazard.levels.get(nbr, 0.0) < 0.80:
                         G_arrow.add_edge(agent, nbr)
+                        has_green = True
+            # In STANDBY, node signboards maintain default static exit egress
+            if not has_green:
+                static_path = self.sim._static_paths.get(agent, [])
+                if len(static_path) >= 2:
+                    static_next = static_path[1]
+                    if self.sim.hazard.levels.get(agent, 0.0) < 0.80 and self.sim.hazard.levels.get(static_next, 0.0) < 0.80:
+                        G_arrow.add_edge(agent, static_next)
 
         # Detect circular routing loops (directed cycles)
         cycle_nodes = set()
@@ -485,11 +513,16 @@ class IndustrialEvacuationEnv(ParallelEnv):
         truncations = {agent: is_truncated for agent in self.agents}
 
         obs = self._get_observations()
+        actual_surv = round((max(0, n_total - cas_now) / float(n_total)) * 100.0, 1)
+        clear_rate = round((float(evac_now) / float(n_total)) * 100.0, 1)
         infos = {
             agent: {
                 "action_mask": self.get_action_mask(agent),
                 "evacuated": evac_now,
                 "casualties": cas_now,
+                "in_transit": in_transit,
+                "survival_rate": actual_surv,
+                "clearance_rate": clear_rate,
                 "sim_time": self.sim.t,
                 "progress_reward": r_progress,
                 "safety_interventions": safety_interventions,

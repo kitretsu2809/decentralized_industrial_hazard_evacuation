@@ -435,13 +435,18 @@ class ST_TBA_GAT(nn.Module):
         hidden_state: torch.Tensor,
         actions: torch.Tensor,
         action_masks: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        return_logits: bool = False,
+    ) -> Union[
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+    ]:
         """
         PPO loss computation step.
         Returns:
           values: (1,) or (Batch, 1)
           action_log_probs: (N,)
           entropy: (N,)
+          logits: (N, NUM_ACTIONS) if return_logits is True
         """
         logits, new_hidden_state = self.forward_actor(
             node_features, edge_index, hidden_state, action_masks
@@ -457,6 +462,8 @@ class ST_TBA_GAT(nn.Module):
         log_probs = dist.log_prob(actions)  # (N,)
         entropy = dist.entropy()           # (N,)
 
+        if return_logits:
+            return value, log_probs, entropy, logits
         return value, log_probs, entropy
 
     # ── Checkpointing & Export ────────────────────────────────────────────────
