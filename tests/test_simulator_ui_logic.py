@@ -49,6 +49,7 @@ class SimulatorUIContractTests(unittest.TestCase):
     def setUpClass(cls):
         cls.html = (ROOT / "simulator/static/index.html").read_text(encoding="utf-8")
         cls.javascript = (ROOT / "simulator/static/simulator.js").read_text(encoding="utf-8")
+        cls.styles = (ROOT / "simulator/static/style.css").read_text(encoding="utf-8")
         cls.tour = (ROOT / "simulator/static/tour_controller.js").read_text(encoding="utf-8")
 
     def test_control_ids_are_unique_and_present(self):
@@ -84,12 +85,28 @@ class SimulatorUIContractTests(unittest.TestCase):
         self.assertIn('id="packet-bits"', self.html)
         self.assertIn('id="packet-directions"', self.html)
 
+    def test_map_and_camera_node_selection_share_one_node_context(self):
+        self.assertIn("function syncNodeSelectors(nodeId)", self.javascript)
+        self.assertIn("syncNodeSelectors(signHit.u.id)", self.javascript)
+        self.assertIn("syncNodeSelectors(n.id)", self.javascript)
+        self.assertIn("const activeFeedId = (perception.node_feeds || {})[nodeId]", self.javascript)
+
     def test_workspace_is_split_into_persistent_operational_screens(self):
         for screen in ("operations", "scenario", "perception"):
             self.assertIn(f'data-screen-target="{screen}"', self.html)
         self.assertIn("setWorkspaceScreen", self.javascript)
         self.assertIn('data-screen-section="perception"', self.html)
         self.assertIn("Video-to-routing data flow", self.html)
+
+    def test_desktop_rails_scroll_without_expanding_the_viewport_grid(self):
+        rail_rule = re.search(r"\.rail\s*\{(?P<body>.*?)\}", self.styles, re.DOTALL)
+        self.assertIsNotNone(rail_rule)
+        declarations = rail_rule.group("body")
+        self.assertIn("min-height: 0", declarations)
+        self.assertIn("height: 100%", declarations)
+        self.assertIn("overflow-y: auto", declarations)
+        self.assertIn("overflow-x: hidden", declarations)
+        self.assertIn("scrollbar-gutter: stable", declarations)
 
 
 if __name__ == "__main__":

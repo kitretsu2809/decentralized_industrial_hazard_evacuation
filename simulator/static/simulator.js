@@ -910,16 +910,14 @@ function handleClick(e) {
   const signHit = getSignAtScreenPos(mx, my);
   if (signHit) {
     clickedNode = signHit.u.id;
-    const sel = document.getElementById("node-select");
-    if (sel) sel.value = signHit.u.id;
+    syncNodeSelectors(signHit.u.id);
     return;
   }
 
   const n = getNodeAtScreenPos(mx, my);
   if (n) {
     clickedNode = n.id;
-    const sel = document.getElementById("node-select");
-    if (sel) sel.value = n.id;
+    syncNodeSelectors(n.id);
   } else {
     clickedNode = null;
   }
@@ -1097,6 +1095,21 @@ function populateNodeSelect() {
   });
 }
 
+function setSelectorValueIfPresent(selector, nodeId) {
+  if (!selector || !nodeId) return false;
+  const hasNode = Array.from(selector.options).some(option => option.value === nodeId);
+  if (hasNode) selector.value = nodeId;
+  return hasNode;
+}
+
+function syncNodeSelectors(nodeId) {
+  setSelectorValueIfPresent(document.getElementById("node-select"), nodeId);
+  const cameraSelector = document.getElementById("camera-node-select");
+  if (setSelectorValueIfPresent(cameraSelector, nodeId)) {
+    updatePerceptionPanel(lastState ? (lastState.perception || {}) : {});
+  }
+}
+
 function backendSummary(info, fallback = "Unavailable") {
   if (!info) return fallback;
   if (info.available) return info.name || "Available";
@@ -1129,7 +1142,11 @@ async function loadPerceptionCapabilities() {
 
 function selectedPerceptionFeed(perception, nodeId) {
   const feeds = Object.values(perception.feeds || {});
-  return feeds.find(feed => feed.node_id === nodeId) || null;
+  const activeFeedId = (perception.node_feeds || {})[nodeId];
+  if (activeFeedId && perception.feeds && perception.feeds[activeFeedId]) {
+    return perception.feeds[activeFeedId];
+  }
+  return feeds.reverse().find(feed => feed.node_id === nodeId) || null;
 }
 
 function drawPerceptionOverlay(feed) {
@@ -1581,7 +1598,13 @@ document.getElementById("camera-video-input").addEventListener("change", event =
 });
 
 document.getElementById("btn-camera-upload").addEventListener("click", uploadPerceptionFeed);
-document.getElementById("camera-node-select").addEventListener("change", () => {
+document.getElementById("camera-node-select").addEventListener("change", event => {
+  const node = building?.nodes?.[event.target.value];
+  if (node) {
+    setFloor(node.floor);
+    clickedNode = node.id;
+    setSelectorValueIfPresent(document.getElementById("node-select"), node.id);
+  }
   updatePerceptionPanel(lastState ? (lastState.perception || {}) : {});
 });
 

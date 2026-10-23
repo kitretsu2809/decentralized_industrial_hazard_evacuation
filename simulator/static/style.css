@@ -338,7 +338,13 @@ body[data-screen="perception"] .camera-preview-shell video { max-height: 300px; 
 
 .rail {
   min-width: 0;
+  min-height: 0;
+  height: 100%;
   overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-color: #29404b transparent;
   background: var(--surface);
 }
 
@@ -1269,7 +1275,7 @@ canvas {
     overflow: visible;
   }
   .twin-stage { min-height: 680px; order: 1; }
-  .rail { width: 100%; overflow: visible; display: grid; grid-template-columns: repeat(2, 1fr); }
+  .rail { width: 100%; height: auto; overflow: visible; display: grid; grid-template-columns: repeat(2, 1fr); }
   .rail-left { order: 2; border-right: 0; border-top: 1px solid var(--line); }
   .rail-right { order: 3; border-left: 0; border-top: 1px solid var(--line); }
   .rail-disclaimer { align-self: stretch; }

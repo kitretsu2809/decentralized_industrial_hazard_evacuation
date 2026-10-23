@@ -82,6 +82,25 @@ class PerceptionPipelineTests(unittest.TestCase):
         self.assertEqual(state["person_count"], 7)
         self.assertEqual(state["vector"]["crowd_density"], 1.2)
 
+    def test_reassigning_node_exposes_latest_feed_as_active(self):
+        class StubBackend:
+            backend_status = {"name": "stub", "available": True}
+
+        pipeline = SimulatorPerceptionPipeline(
+            on_update=lambda update: None,
+            sensor_provider=lambda node_id: (8.0, 24.0, 52.0),
+            detector=StubBackend(),
+            sensor_detector=StubBackend(),
+        )
+        with patch("simulator.perception.video_pipeline.HAS_CV2", False):
+            first = pipeline.assign_video("node-a", 1, 20, "/tmp/first.mp4", "first.mp4")
+            second = pipeline.assign_video("node-a", 1, 20, "/tmp/second.mp4", "second.mp4")
+
+        state = pipeline.get_state()
+        self.assertNotEqual(first["feed_id"], second["feed_id"])
+        self.assertEqual(state["node_feeds"]["node-a"], second["feed_id"])
+        self.assertEqual(state["feeds"][second["feed_id"]]["original_name"], "second.mp4")
+
 
 if __name__ == "__main__":
     unittest.main()

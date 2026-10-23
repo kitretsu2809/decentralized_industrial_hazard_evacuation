@@ -293,6 +293,7 @@ class SimulatorPerceptionPipeline:
             return {
                 "capabilities": self.capabilities(),
                 "feeds": {feed_id: feed.public_dict() for feed_id, feed in self.feeds.items()},
+                "node_feeds": dict(self.node_feeds),
             }
 
     def get_feed(self, feed_id: str) -> Optional[PerceptionFeed]:
