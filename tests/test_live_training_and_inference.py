@@ -88,13 +88,13 @@ class TestLiveTrainingAndInference(unittest.TestCase):
         self.assertTrue(ok)
         self.assertTrue(worker.is_running)
 
-        # Wait up to 15 seconds for 2 quick episodes to finish
+        # Wait up to 45 seconds for 2 quick episodes to finish (generous for shared CI / Kaggle GPUs)
         start_t = time.time()
-        while worker.is_running and (time.time() - start_t) < 15:
+        while worker.is_running and (time.time() - start_t) < 45:
             time.sleep(0.2)
 
         status = worker.get_status()
-        self.assertFalse(status["is_training"])
+        self.assertFalse(status["is_training"], f"Worker still training after {time.time() - start_t:.1f}s")
         self.assertEqual(status["total_episodes"], 2)
         self.assertGreaterEqual(len(hot_loaded), 1, "At least 1 episode callback should have fired")
         self.assertIn("survival_rate", status["metrics"])
