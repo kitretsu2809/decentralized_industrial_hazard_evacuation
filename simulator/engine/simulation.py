@@ -59,12 +59,16 @@ def _compute_static_exit_distances(edge_list, exits, node_positions):
     return exit_dists
 
 
-def _load_building():
+def _load_building(layout_id="petrochemical"):
     sys.path.insert(0, _REPO)
     try:
-        from sim.services.environment.src.floorplan_generator import generate_industrial_plant
+        from sim.services.environment.src.floorplan_generator import (
+            building_layout_catalog,
+            generate_industrial_layout,
+        )
         from core.graph.types import NodeType
-        building = generate_industrial_plant()
+        building = generate_industrial_layout(layout_id)
+        catalog = building_layout_catalog()
 
         node_positions, node_floors, node_types, node_capacities = {}, {}, {}, {}
         edge_list, exits = [], []
@@ -84,7 +88,7 @@ def _load_building():
 
         b_name = building.name.replace("LBP ", "").strip()
         return (node_positions, node_floors, node_types,
-                node_capacities, edge_list, exits, b_name)
+                node_capacities, edge_list, exits, b_name, catalog)
     except ImportError as e:
         raise RuntimeError(f"Could not import building model: {e}")
 
@@ -93,10 +97,11 @@ class Simulation:
     DT = 0.1            # physics timestep (seconds) — keep ≤0.1 for SFM stability
     POLICY_DECISION_DT = 1.0  # seconds between live neural signboard decisions
 
-    def __init__(self):
+    def __init__(self, layout_id: str = "petrochemical"):
         (self.node_positions, self.node_floors, self.node_types,
          self.node_capacities, self.edge_list, self.exits,
-         self.building_name) = _load_building()
+         self.building_name, self.layout_catalog) = _load_building(layout_id)
+        self.layout_id = layout_id
 
         adj_with_dist = _build_adjacency_with_dist(self.edge_list)
         for nid in self.node_positions:
@@ -163,6 +168,59 @@ class Simulation:
         self._init_policy()
 
         self._init_agents()
+
+    def _replace_topology(self, layout_id: str) -> None:
+        (self.node_positions, self.node_floors, self.node_types,
+         self.node_capacities, self.edge_list, self.exits,
+         self.building_name, self.layout_catalog) = _load_building(layout_id)
+        self.layout_id = layout_id
+
+        adjacency = _build_adjacency_with_dist(self.edge_list)
+        for node_id in self.node_positions:
+            adjacency.setdefault(node_id, [])
+        self.hazard = HazardModel(adjacency, exits=self.exits, node_floors=self.node_floors)
+        self.router = DijkstraRouter()
+        self.router.build(self.edge_list, self.exits, self.node_floors)
+        self.sfm = SocialForceModel(self.node_positions, self.node_floors, self.edge_list)
+        self.static_exit_dists = _compute_static_exit_distances(
+            self.edge_list, self.exits, self.node_positions
+        )
+        self.agent_neighbors = {node_id: [] for node_id in self.node_positions}
+        for source, target, _distance, _width in self.edge_list:
+            if target not in self.agent_neighbors[source]:
+                self.agent_neighbors[source].append(target)
+            if source not in self.agent_neighbors[target]:
+                self.agent_neighbors[target].append(source)
+        self.directional_neighbors = {
+            node_id: assign_direction_slots(
+                node_id,
+                neighbors,
+                self.node_positions,
+                self.node_floors,
+            )
+            for node_id, neighbors in self.agent_neighbors.items()
+        }
+
+    def switch_layout(self, layout_id: str, num_evacuees: Optional[int] = None) -> bool:
+        """Install another physical topology and reset all topology-bound state."""
+        if layout_id not in self.layout_catalog:
+            return False
+        self._replace_topology(layout_id)
+        self.policy_multipliers = {}
+        self.signboard_actions = {}
+        self._externally_controlled_signboards = False
+        self._static_paths = {}
+        self.active_comm_nodes = None
+        self._last_hazards = {}
+        self._last_crowds = {}
+        with self._perception_lock:
+            self._perception_nodes = {}
+            self._pending_perception_updates = []
+            self._mesh_inboxes = {node_id: {} for node_id in self.node_positions}
+        self._compute_static_paths()
+        self._init_policy()
+        self.reset(num_evacuees=num_evacuees)
+        return True
 
     def _init_policy(self):
         self.policy_model = None
@@ -1113,8 +1171,15 @@ class Simulation:
             }
         edges_out = [{"source": s, "target": t, "distance": d, "width": w}
                      for s, t, d, w in self.edge_list]
-        return {"name": self.building_name, "nodes": nodes,
-                "edges": edges_out, "exits": self.exits}
+        return {
+            "name": self.building_name,
+            "layout_id": self.layout_id,
+            "layout": dict(self.layout_catalog.get(self.layout_id, {})),
+            "available_layouts": list(self.layout_catalog.values()),
+            "nodes": nodes,
+            "edges": edges_out,
+            "exits": self.exits,
+        }
 
 
 def _nearest_node(x, y, positions, node_floors=None, floor=1):

@@ -305,6 +305,190 @@ def generate_industrial_plant(name: str = 'LBP Petrochemical Refinery') -> Build
     return b
 
 
+def _append_floor_edges(floor: Floor, prefix: str, edges: List[tuple]) -> None:
+    """Add compact layout edge specifications to a floor."""
+    for idx, (source, target, distance, width, throughput) in enumerate(edges):
+        floor.edges.append(Edge(
+            id=f"{prefix}_{idx}",
+            source=source,
+            target=target,
+            distance=float(distance),
+            width=float(width),
+            max_throughput=int(throughput),
+        ))
+
+
+def generate_hexagonal_cell_factory(name: str = 'LBP Hexagonal Cell Manufacturing Plant') -> Building:
+    """Hexagonal cellular-manufacturing hall with a central robotic assembly cell.
+
+    The six-sided circulation loop provides alternate paths around a disabled
+    production area, while three separated exit discharges avoid a single
+    egress dependency.  The centre controller has six directional neighbours,
+    within the eight-direction mesh protocol limit.
+    """
+    building = Building(name=name)
+    floor = Floor(level=1)
+    node_specs = [
+        ('north_cross_aisle', NodeType.CORRIDOR, 45, (130.0, 18.0)),
+        ('quality_metrology', NodeType.ROOM, 22, (180.0, 43.0)),
+        ('packaging_cell', NodeType.ROOM, 34, (180.0, 97.0)),
+        ('south_cross_aisle', NodeType.CORRIDOR, 45, (130.0, 122.0)),
+        ('cnc_machining_cell', NodeType.ROOM, 32, (80.0, 97.0)),
+        ('receiving_kitting', NodeType.ROOM, 30, (80.0, 43.0)),
+        ('robotic_assembly_cell', NodeType.INTERSECTION, 52, (130.0, 70.0)),
+        ('battery_charge_room', NodeType.ROOM, 10, (130.0, 43.0)),
+        ('muster_north', NodeType.EXIT, 120, (130.0, -5.0)),
+        ('muster_east', NodeType.EXIT, 120, (220.0, 70.0)),
+        ('muster_west', NodeType.EXIT, 120, (40.0, 70.0)),
+    ]
+    for node_id, node_type, capacity, position in node_specs:
+        floor.nodes[node_id] = Node(
+            id=node_id,
+            type=node_type,
+            floor=1,
+            capacity=capacity,
+            position=position,
+        )
+    floor.exits.extend(['muster_north', 'muster_east', 'muster_west'])
+
+    ring = [
+        ('north_cross_aisle', 'quality_metrology', 32, 3.2, 18),
+        ('quality_metrology', 'packaging_cell', 30, 2.8, 15),
+        ('packaging_cell', 'south_cross_aisle', 32, 3.2, 18),
+        ('south_cross_aisle', 'cnc_machining_cell', 32, 3.2, 18),
+        ('cnc_machining_cell', 'receiving_kitting', 30, 3.0, 16),
+        ('receiving_kitting', 'north_cross_aisle', 32, 3.2, 18),
+    ]
+    spokes = [
+        ('robotic_assembly_cell', 'north_cross_aisle', 29, 3.8, 24),
+        ('robotic_assembly_cell', 'quality_metrology', 29, 2.8, 15),
+        ('robotic_assembly_cell', 'packaging_cell', 29, 3.2, 18),
+        ('robotic_assembly_cell', 'south_cross_aisle', 29, 3.8, 24),
+        ('robotic_assembly_cell', 'cnc_machining_cell', 29, 3.2, 18),
+        ('robotic_assembly_cell', 'receiving_kitting', 29, 3.5, 20),
+        ('battery_charge_room', 'north_cross_aisle', 25, 2.0, 8),
+        ('battery_charge_room', 'quality_metrology', 32, 2.0, 8),
+    ]
+    egress = [
+        ('north_cross_aisle', 'muster_north', 15, 4.5, 36),
+        ('quality_metrology', 'muster_east', 28, 3.5, 24),
+        ('packaging_cell', 'muster_east', 28, 3.5, 24),
+        ('receiving_kitting', 'muster_west', 28, 3.5, 24),
+        ('cnc_machining_cell', 'muster_west', 28, 3.5, 24),
+    ]
+    _append_floor_edges(floor, 'e_hex', ring + spokes + egress)
+    building.floors[1] = floor
+    return building
+
+
+def generate_u_shaped_factory(name: str = 'LBP U-Shaped High-Bay Manufacturing Hall') -> Building:
+    """U-shaped material-flow hall with cross aisles and separated muster exits."""
+    building = Building(name=name)
+    floor = Floor(level=1)
+    node_specs = [
+        ('receiving_dock', NodeType.ROOM, 28, (35.0, 25.0)),
+        ('raw_material_store', NodeType.ROOM, 38, (35.0, 55.0)),
+        ('cnc_machining', NodeType.ROOM, 44, (35.0, 90.0)),
+        ('welding_cell', NodeType.ROOM, 34, (75.0, 118.0)),
+        ('main_assembly_line', NodeType.ROOM, 70, (120.0, 118.0)),
+        ('paint_finishing', NodeType.ROOM, 26, (165.0, 118.0)),
+        ('quality_control', NodeType.ROOM, 24, (205.0, 90.0)),
+        ('packaging_zone', NodeType.ROOM, 36, (205.0, 55.0)),
+        ('shipping_dock', NodeType.ROOM, 28, (205.0, 25.0)),
+        ('west_cross_aisle', NodeType.INTERSECTION, 45, (80.0, 73.0)),
+        ('central_cross_aisle', NodeType.INTERSECTION, 55, (120.0, 73.0)),
+        ('east_cross_aisle', NodeType.INTERSECTION, 45, (160.0, 73.0)),
+        ('utilities_control', NodeType.ROOM, 14, (120.0, 35.0)),
+        ('muster_west', NodeType.EXIT, 160, (8.0, 118.0)),
+        ('muster_east', NodeType.EXIT, 160, (232.0, 118.0)),
+        ('muster_north', NodeType.EXIT, 120, (120.0, 5.0)),
+    ]
+    for node_id, node_type, capacity, position in node_specs:
+        floor.nodes[node_id] = Node(
+            id=node_id,
+            type=node_type,
+            floor=1,
+            capacity=capacity,
+            position=position,
+        )
+    floor.exits.extend(['muster_west', 'muster_east', 'muster_north'])
+
+    production_flow = [
+        ('receiving_dock', 'raw_material_store', 24, 4.0, 26),
+        ('raw_material_store', 'cnc_machining', 28, 3.6, 22),
+        ('cnc_machining', 'welding_cell', 34, 3.2, 18),
+        ('welding_cell', 'main_assembly_line', 34, 4.0, 26),
+        ('main_assembly_line', 'paint_finishing', 34, 4.0, 26),
+        ('paint_finishing', 'quality_control', 34, 3.2, 18),
+        ('quality_control', 'packaging_zone', 28, 3.6, 22),
+        ('packaging_zone', 'shipping_dock', 24, 4.0, 26),
+    ]
+    cross_aisles = [
+        ('west_cross_aisle', 'central_cross_aisle', 30, 4.5, 30),
+        ('central_cross_aisle', 'east_cross_aisle', 30, 4.5, 30),
+        ('west_cross_aisle', 'raw_material_store', 31, 3.5, 22),
+        ('west_cross_aisle', 'cnc_machining', 32, 3.5, 22),
+        ('central_cross_aisle', 'main_assembly_line', 35, 4.5, 30),
+        ('east_cross_aisle', 'quality_control', 32, 3.5, 22),
+        ('east_cross_aisle', 'packaging_zone', 31, 3.5, 22),
+        ('central_cross_aisle', 'utilities_control', 28, 3.0, 16),
+        ('utilities_control', 'receiving_dock', 58, 3.0, 16),
+        ('utilities_control', 'shipping_dock', 58, 3.0, 16),
+    ]
+    egress = [
+        ('cnc_machining', 'muster_west', 24, 4.5, 34),
+        ('welding_cell', 'muster_west', 42, 4.0, 28),
+        ('paint_finishing', 'muster_east', 42, 4.0, 28),
+        ('quality_control', 'muster_east', 24, 4.5, 34),
+        ('utilities_control', 'muster_north', 24, 4.0, 28),
+    ]
+    _append_floor_edges(floor, 'e_ushape', production_flow + cross_aisles + egress)
+    building.floors[1] = floor
+    return building
+
+
+BUILDING_LAYOUTS = {
+    'petrochemical': {
+        'name': 'Petrochemical Refinery',
+        'shape': 'Multi-level process yard',
+        'description': 'Tank farm, reactors, pipe racks, mezzanines and elevated process decks.',
+        'generator': generate_industrial_plant,
+    },
+    'hexagonal_cell': {
+        'name': 'Hexagonal Cell Factory',
+        'shape': 'Six-sided cellular loop',
+        'description': 'Central robotic assembly with a redundant hexagonal material-flow aisle.',
+        'generator': generate_hexagonal_cell_factory,
+    },
+    'u_shaped_hall': {
+        'name': 'U-Shaped High-Bay Hall',
+        'shape': 'U-flow production hall',
+        'description': 'Receiving-to-shipping production flow with three protected cross-aisle exits.',
+        'generator': generate_u_shaped_factory,
+    },
+}
+
+
+def building_layout_catalog() -> Dict[str, Dict[str, str]]:
+    return {
+        layout_id: {
+            'id': layout_id,
+            'name': spec['name'],
+            'shape': spec['shape'],
+            'description': spec['description'],
+        }
+        for layout_id, spec in BUILDING_LAYOUTS.items()
+    }
+
+
+def generate_industrial_layout(layout_id: str = 'petrochemical') -> Building:
+    try:
+        generator = BUILDING_LAYOUTS[layout_id]['generator']
+    except KeyError as exc:
+        raise ValueError(f"Unknown industrial layout: {layout_id}") from exc
+    return generator()
+
+
 
 def export_building_to_yaml(building: Building, path: str) -> None:
     data = {

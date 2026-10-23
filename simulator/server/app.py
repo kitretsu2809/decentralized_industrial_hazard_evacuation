@@ -215,6 +215,29 @@ async def websocket_endpoint(ws: WebSocket):
                 sim.reset(num_evacuees=msg.get("num_evacuees"))
                 await ws.send_text(json.dumps({"type": "building",
                                                "data": sim.building_dict()}))
+            elif action == "switch_layout":
+                requested_layout = str(msg.get("layout_id", ""))
+                if requested_layout in sim.layout_catalog:
+                    perception.clear_feeds()
+                ok = sim.switch_layout(
+                    requested_layout,
+                    num_evacuees=msg.get("num_evacuees"),
+                )
+                if ok:
+                    await manager.broadcast({
+                        "type": "building",
+                        "data": sim.building_dict(),
+                    })
+                await ws.send_text(json.dumps({
+                    "type": "ack_layout",
+                    "ok": ok,
+                    "layout_id": sim.layout_id,
+                    "reason": (
+                        f"Loaded {sim.building_name}"
+                        if ok
+                        else "Unknown facility layout"
+                    ),
+                }))
             elif action == "set_speed":
                 sim.set_speed(float(msg.get("speed", 1.0)))
             elif action == "set_evacuees":

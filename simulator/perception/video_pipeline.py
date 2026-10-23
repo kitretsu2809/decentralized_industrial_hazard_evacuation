@@ -316,6 +316,13 @@ class SimulatorPerceptionPipeline:
         for feed_id in list(self.feeds):
             self.stop_feed(feed_id)
 
+    def clear_feeds(self) -> None:
+        """Stop and detach all feeds when the simulated physical site changes."""
+        self.stop_all()
+        with self._lock:
+            self.feeds.clear()
+            self.node_feeds.clear()
+
     def media_path(self, feed_id: str) -> Optional[Path]:
         feed = self.get_feed(feed_id)
         return Path(feed.video_path) if feed else None

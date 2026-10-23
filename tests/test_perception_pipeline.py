@@ -101,6 +101,10 @@ class PerceptionPipelineTests(unittest.TestCase):
         self.assertEqual(state["node_feeds"]["node-a"], second["feed_id"])
         self.assertEqual(state["feeds"][second["feed_id"]]["original_name"], "second.mp4")
 
+        pipeline.clear_feeds()
+        self.assertEqual(pipeline.get_state()["feeds"], {})
+        self.assertEqual(pipeline.get_state()["node_feeds"], {})
+
 
 if __name__ == "__main__":
     unittest.main()

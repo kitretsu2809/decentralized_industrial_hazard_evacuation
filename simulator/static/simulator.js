@@ -213,7 +213,7 @@ function setConn(live) {
   document.getElementById("conn-dot").classList.toggle("live", live);
   document.getElementById("conn-text").textContent = live ? "Live link" : "Reconnecting";
   document.getElementById("connection-badge").classList.toggle("offline", !live);
-  ["btn-play", "btn-pause", "btn-reset", "btn-alarm", "btn-inject", "btn-camera-upload", "sign-policy-select"]
+  ["btn-play", "btn-pause", "btn-reset", "btn-alarm", "btn-inject", "btn-camera-upload", "sign-policy-select", "building-layout-select"]
     .forEach(id => {
       const el = document.getElementById(id);
       if (el) el.disabled = !live;
@@ -223,11 +223,18 @@ function setConn(live) {
 function handleMessage(msg) {
   if (msg.type === "building") {
     building = msg.data;
+    lastState = null;
+    prevState = null;
+    clickedNode = null;
+    hoverNode = null;
     document.getElementById("facility-name").textContent = building.name || "Industrial facility";
+    setText("layout-profile", building.layout?.shape || "Industrial topology");
+    populateLayoutSelect();
     buildFloorTabs();
     updateInfrastructureSummary();
     fitBuilding(true);
     populateNodeSelect();
+    updatePerceptionPanel({});
     return;
   }
   if (msg.type === "ack_inject") {
@@ -253,6 +260,13 @@ function handleMessage(msg) {
       msg.ok
     );
     appendEvent(msg.ok ? `${policyLabel(msg.mode)} routing engaged` : "AI request rejected; baseline retained");
+    return;
+  }
+  if (msg.type === "ack_layout") {
+    const selector = document.getElementById("building-layout-select");
+    if (selector) selector.value = msg.layout_id;
+    showCommandFeedback(msg.reason, msg.ok);
+    if (msg.ok) appendEvent(msg.reason);
     return;
   }
   if (msg.pedestrians !== undefined) {
@@ -412,7 +426,7 @@ function drawCorridors(edges, hazards) {
       const rgb = (hazards[e.source] || hazards[e.target] || {}).rgb || [249, 115, 22];
       ctx.fillStyle = `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${0.15 + h * 0.45})`;
     } else {
-      ctx.fillStyle = "rgba(18, 26, 42, 0.85)";
+      ctx.fillStyle = "rgba(53, 58, 61, 0.9)";
     }
     ctx.fill();
 
@@ -465,7 +479,6 @@ let renderedSigns = [];     // Screen cache for hit-testing and interactive insp
 
 function drawSignboards(signboards, floorNodes) {
   if (!building) return;
-  const now = performance.now();
   renderedSigns = [];
 
   floorNodes.forEach(u => {
@@ -523,20 +536,18 @@ function drawSignboards(signboards, floorNodes) {
 
       ctx.save();
       if (isHovered) {
-        // High-contrast electric blue laser beam connecting controller to hovered sign
-        ctx.strokeStyle = "#38bdf8";
+        // High-contrast maintenance trace from controller to hovered sign.
+        ctx.strokeStyle = "#aeb9bc";
         ctx.lineWidth = 3.0;
-        ctx.shadowColor = "#38bdf8";
-        ctx.shadowBlur = 12;
         ctx.beginPath();
         ctx.moveTo(startX, startY);
         ctx.lineTo(px, py);
         ctx.stroke();
 
-        // Pulsing Controller Beacon on node u
+        // Controller locator ring on node u.
         ctx.beginPath();
-        ctx.arc(sx, sy, nodeR + 6 + Math.sin(now / 110) * 3, 0, Math.PI * 2);
-        ctx.strokeStyle = "#38bdf8";
+        ctx.arc(sx, sy, nodeR + 7, 0, Math.PI * 2);
+        ctx.strokeStyle = "#aeb9bc";
         ctx.lineWidth = 2.5;
         ctx.stroke();
 
@@ -545,22 +556,22 @@ function drawSignboards(signboards, floorNodes) {
         const ctrlLabel = `CONTROLLER: ${u.id.replace(/_/g, " ").toUpperCase()}`;
         ctx.font = "bold 9px Inter, sans-serif";
         const tw = ctx.measureText(ctrlLabel).width;
-        ctx.fillStyle = "rgba(15, 23, 42, 0.95)";
-        ctx.strokeStyle = "#38bdf8";
+        ctx.fillStyle = "rgba(41, 45, 48, 0.97)";
+        ctx.strokeStyle = "#aeb9bc";
         ctx.lineWidth = 1.4;
         if (ctx.roundRect) ctx.roundRect(sx - tw/2 - 6, sy - nodeR - 24, tw + 12, 17, 3);
         else ctx.rect(sx - tw/2 - 6, sy - nodeR - 24, tw + 12, 17);
         ctx.fill();
         ctx.stroke();
 
-        ctx.fillStyle = "#38bdf8";
+        ctx.fillStyle = "#eceeed";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillText(ctrlLabel, sx, sy - nodeR - 15);
 
       } else if (isNodeHovered) {
         // Highlight conduit when parent node u is hovered
-        ctx.strokeStyle = "rgba(56, 189, 248, 0.85)";
+        ctx.strokeStyle = "rgba(174, 185, 188, 0.85)";
         ctx.lineWidth = 2.0;
         ctx.setLineDash([4, 2]);
         ctx.beginPath();
@@ -569,7 +580,7 @@ function drawSignboards(signboards, floorNodes) {
         ctx.stroke();
       } else {
         // Subtle architectural wiring line
-        ctx.strokeStyle = "rgba(56, 189, 248, 0.35)";
+        ctx.strokeStyle = "rgba(143, 163, 170, 0.42)";
         ctx.lineWidth = 1.2;
         ctx.setLineDash([3, 3]);
         ctx.beginPath();
@@ -589,14 +600,10 @@ function drawSignboards(signboards, floorNodes) {
       }
 
       // Mounting collar / bracket connecting conduit to sign
-      ctx.fillStyle = (isHovered || isNodeHovered) ? "#38bdf8" : "rgba(148, 163, 184, 0.8)";
+      ctx.fillStyle = (isHovered || isNodeHovered) ? "#aeb9bc" : "rgba(148, 153, 155, 0.8)";
       ctx.fillRect(-signW / 2 - 3, -2.5, 3.5, 5);
 
-      const drawSignBg = (bg, border, shadow, pulseAmt = 0) => {
-        if (shadow) {
-          ctx.shadowColor = shadow;
-          ctx.shadowBlur = 8 + pulseAmt;
-        }
+      const drawSignBg = (bg, border) => {
         ctx.fillStyle = bg;
         ctx.beginPath();
         if (ctx.roundRect) ctx.roundRect(-signW / 2, -signH / 2, signW, signH, 3.5);
@@ -609,12 +616,11 @@ function drawSignboards(signboards, floorNodes) {
       };
 
       if (act === "ARROW" || act === "NORMAL_ARROW") {
-        // Green LED Evacuation Arrow (Safe Exit Route)
-        const pulse = Math.sin(now / 180) * 3;
-        drawSignBg("#022c22", "#22c55e", "#22c55e", pulse);
+        // Green evacuation arrow; colour is reserved for the safe route state.
+        drawSignBg("#27362b", "#83a277");
 
         // Bold directional chevron pointing along corridor
-        ctx.fillStyle = "#4ade80";
+        ctx.fillStyle = "#b7cdb0";
         ctx.beginPath();
         const aw = signW * 0.38;
         const ah = signH * 0.42;
@@ -626,9 +632,8 @@ function drawSignboards(signboards, floorNodes) {
         ctx.fill();
 
       } else if (act === "BLOCKED") {
-        // Red LED "DO NOT ENTER / BLOCKED" (Hazard Ahead)
-        const pulse = Math.sin(now / 150) * 4;
-        drawSignBg("#450a0a", "#ef4444", "#ef4444", pulse);
+        // Red "DO NOT ENTER / BLOCKED" state.
+        drawSignBg("#3a2423", "#d45b52");
 
         // Bold white X
         ctx.strokeStyle = "#ffffff";
@@ -640,12 +645,11 @@ function drawSignboards(signboards, floorNodes) {
         ctx.stroke();
 
       } else if (act === "CAUTION") {
-        // Amber LED Warning / Detour Sign
-        const pulse = Math.sin(now / 220) * 3;
-        drawSignBg("#451a03", "#f59e0b", "#f59e0b", pulse);
+        // Amber warning / detour state.
+        drawSignBg("#3a3121", "#d2a23e");
 
         // Warning triangle
-        ctx.fillStyle = "#fbbf24";
+        ctx.fillStyle = "#e0bb62";
         ctx.beginPath();
         const tw = signW * 0.32;
         const th = signH * 0.38;
@@ -657,9 +661,9 @@ function drawSignboards(signboards, floorNodes) {
 
       } else {
         // Standby Operational Waypoint
-        drawSignBg("rgba(15, 23, 42, 0.90)", "rgba(56, 189, 248, 0.5)", "#38bdf8", 0);
+        drawSignBg("rgba(42, 46, 49, 0.96)", "rgba(143, 163, 170, 0.72)");
 
-        ctx.fillStyle = "#38bdf8";
+        ctx.fillStyle = "#aeb9bc";
         ctx.beginPath();
         const aw = signW * 0.28;
         const ah = signH * 0.30;
@@ -695,14 +699,14 @@ function drawHazardGlows(nodes, hazards) {
 }
 
 const NODE_FILL = {
-  EXIT:         "#0d2b1a", STAIRWELL: "#0c1e33",
-  ELEVATOR:     "#191a38", INTERSECTION: "#1e293b",
-  CORRIDOR:     "#162032", ROOM: "#111827",
+  EXIT:         "#29352a", STAIRWELL: "#2b3337",
+  ELEVATOR:     "#333136", INTERSECTION: "#34383b",
+  CORRIDOR:     "#303437", ROOM: "#2a2d30",
 };
 const NODE_STROKE = {
-  EXIT: "#22c55e", STAIRWELL: "#38bdf8",
-  ELEVATOR: "#818cf8", INTERSECTION: "#475569",
-  CORRIDOR: "#334155", ROOM: "#293548",
+  EXIT: "#83a277", STAIRWELL: "#82959d",
+  ELEVATOR: "#938c99", INTERSECTION: "#777f82",
+  CORRIDOR: "#666e71", ROOM: "#596064",
 };
 
 function drawNodes(nodes, hazards) {
@@ -737,15 +741,15 @@ function drawNodes(nodes, hazards) {
                       const [rr,gg,bb] = hz.rgb;
                       return `rgba(${rr},${gg},${bb},${0.15 + hLvl * 0.2})`;
                     })()
-                  : NODE_FILL[n.type] || "#111827";
+                  : NODE_FILL[n.type] || "#2a2d30";
     ctx.fill();
 
     // Border
-    ctx.strokeStyle = isSel  ? "#38bdf8"
+    ctx.strokeStyle = isSel  ? "#aeb9bc"
                     : isHov  ? "#94a3b8"
                     : blk    ? "#ef4444"
                     : hLvl > 0.1 && hz ? hz.color
-                    : NODE_STROKE[n.type] || "#293548";
+                    : NODE_STROKE[n.type] || "#596064";
     ctx.lineWidth = isSel || isHov ? 2 : (n.is_exit ? 1.5 : 1);
     ctx.stroke();
 
@@ -788,7 +792,7 @@ function drawAgents(agents, prevAgents, alpha) {
       ctx.save();
       ctx.beginPath();
       ctx.arc(cx, cy, r + 3, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(255, 99, 95, 0.18)";
+      ctx.fillStyle = "rgba(212, 91, 82, 0.18)";
       ctx.fill();
       ctx.strokeStyle = "#ff635f";
       ctx.lineWidth = 2;
@@ -803,7 +807,7 @@ function drawAgents(agents, prevAgents, alpha) {
     // Normal state: subtle workstation aura ring
     if (a.state === "normal") {
       ctx.beginPath(); ctx.arc(cx, cy, r + 3, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(56,189,248,0.12)"; ctx.fill();
+      ctx.fillStyle = "rgba(143,163,170,0.12)"; ctx.fill();
     }
 
     // Reacting state: alerted pulsing ring
@@ -844,7 +848,7 @@ function drawRouteLines(agents, hazards) {
     const [bx, by] = toScreen(nNode.x, nNode.y);
     const alpha = a.state === "rerouting" ? 0.55 : 0.12;
     ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
-    ctx.strokeStyle = `rgba(56,189,248,${alpha})`;
+    ctx.strokeStyle = `rgba(143,163,170,${alpha})`;
     ctx.lineWidth = 1; ctx.setLineDash([3, 6]); ctx.stroke(); ctx.setLineDash([]);
   });
 }
@@ -1036,7 +1040,7 @@ function updateSignTooltipStatus(action) {
     signEl.style.color = "var(--yellow)";
   } else {
     signEl.textContent = "• NORMAL (No active direction)";
-    signEl.style.color = "#38bdf8";
+    signEl.style.color = "var(--muted)";
   }
 }
 
@@ -1093,6 +1097,25 @@ function populateNodeSelect() {
       cameraSel.appendChild(cameraGroup);
     }
   });
+}
+
+function populateLayoutSelect() {
+  const selector = document.getElementById("building-layout-select");
+  if (!selector || !building) return;
+  const layouts = building.available_layouts || [];
+  if (layouts.length) {
+    selector.replaceChildren(...layouts.map(layout => {
+      const option = document.createElement("option");
+      option.value = layout.id;
+      option.textContent = layout.name;
+      option.title = `${layout.shape} · ${layout.description}`;
+      return option;
+    }));
+  }
+  selector.value = building.layout_id || "petrochemical";
+  selector.title = building.layout
+    ? `${building.layout.shape} · ${building.layout.description}`
+    : "Select industrial facility layout";
 }
 
 function setSelectorValueIfPresent(selector, nodeId) {
@@ -1167,7 +1190,7 @@ function drawPerceptionOverlay(feed) {
   const scaleY = height / feed.frame_height;
   (feed.detections || []).forEach(detection => {
     const [x1, y1, x2, y2] = detection.bbox || [0, 0, 0, 0];
-    const color = detection.threat_type ? "#ff635f" : detection.class_name === "person" ? "#40c9d6" : "#f5b84b";
+    const color = detection.threat_type ? "#d45b52" : detection.class_name === "person" ? "#8fa3aa" : "#d2a23e";
     context.strokeStyle = color;
     context.lineWidth = 2;
     context.strokeRect(x1 * scaleX, y1 * scaleY, (x2 - x1) * scaleX, (y2 - y1) * scaleY);
@@ -1177,7 +1200,7 @@ function drawPerceptionOverlay(feed) {
     const labelY = Math.max(12, y1 * scaleY);
     context.fillStyle = color;
     context.fillRect(x1 * scaleX, labelY - 12, labelWidth, 13);
-    context.fillStyle = "#071018";
+    context.fillStyle = "#202326";
     context.fillText(label, x1 * scaleX + 4, labelY - 2);
   });
 }
@@ -1553,6 +1576,20 @@ if (signPolicySel) {
   signPolicySel.addEventListener("change", (e) => {
     send({action: "set_policy_mode", mode: e.target.value});
     showCommandFeedback(`Requesting ${policyLabel(e.target.value)} routing…`);
+  });
+}
+
+const buildingLayoutSelect = document.getElementById("building-layout-select");
+if (buildingLayoutSelect) {
+  buildingLayoutSelect.addEventListener("change", event => {
+    const input = document.getElementById("evacuee-count");
+    const numEvacuees = Math.max(5, Math.min(400, parseInt(input.value) || 60));
+    send({
+      action: "switch_layout",
+      layout_id: event.target.value,
+      num_evacuees: numEvacuees,
+    });
+    showCommandFeedback("Loading facility topology…");
   });
 }
 

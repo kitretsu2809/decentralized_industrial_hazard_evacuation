@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#071018">
+  <meta name="theme-color" content="#202326">
   <title>Industrial Evacuation Safety Digital Twin</title>
-  <link rel="stylesheet" href="/static/style.css?v=3.2">
+  <link rel="stylesheet" href="/static/style.css?v=3.4">
 </head>
 <body data-screen="operations">
   <header class="app-header">
@@ -168,9 +168,17 @@
       <div class="stage-toolbar">
         <div>
           <span class="section-kicker" id="workspace-context">Live facility view</span>
-          <div class="stage-title"><span id="facility-name">Petrochemical facility</span><span class="title-separator">/</span><span id="floor-context">Floor 1</span></div>
+          <div class="stage-title"><span id="facility-name">Petrochemical facility</span><span class="title-separator">/</span><span id="floor-context">Floor 1</span><span class="layout-profile" id="layout-profile">Multi-level process yard</span></div>
         </div>
         <div class="stage-controls">
+          <label class="layout-picker" for="building-layout-select">
+            <span>Facility layout</span>
+            <select id="building-layout-select" aria-label="Select industrial facility layout">
+              <option value="petrochemical">Petrochemical Refinery</option>
+              <option value="hexagonal_cell">Hexagonal Cell Factory</option>
+              <option value="u_shaped_hall">U-Shaped High-Bay Hall</option>
+            </select>
+          </label>
           <div class="floor-tabs" id="floor-tabs" aria-label="Select facility floor"></div>
           <button class="map-button" id="btn-fit" title="Fit floorplan to view">Fit view</button>
         </div>
@@ -269,7 +277,7 @@
     </aside>
   </main>
 
-  <script src="/static/simulator.js?v=3.2"></script>
+  <script src="/static/simulator.js?v=3.4"></script>
   <script src="/static/tour_controller.js?v=3.1"></script>
 </body>
 </html>

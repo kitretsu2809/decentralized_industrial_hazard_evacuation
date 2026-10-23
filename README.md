@@ -175,13 +175,14 @@ Open your browser to:
 - Local network (Wi-Fi/LAN): **`http://<YOUR_LOCAL_IP>:8080`**
 
 #### Interactive Dashboard Features:
+- **Facility Layout Switching**: Reset the digital twin between a multi-level petrochemical refinery, a six-sided cellular-manufacturing plant, and a U-shaped high-bay manufacturing hall. Each selection replaces the actual routing, hazard, crowd, signboard, and communication graph.
 - **Floor Switching**: Toggle between **Floor 1 (Ground & Tank Farm)**, **Floor 2 (Process Deck & Control Room)**, and **Floor 3 (Top Catwalk & Flare Deck)**.
 - **Incident Injection**: Click any plant node and select **Toxic Gas Release**, **Thermal Fire**, **Structural Blast / Explosion**, or **Chemical Spill** with adjustable intensity.
 - **Policy Modes**: Switch seamlessly in real-time between:
   - `STATIC NFPA 101`: Standard immutable exit routing.
   - `CENTRALIZED DIJKSTRA`: Dynamic shortest-path routing (vulnerable to link cuts).
   - `MARL ST-TBA-GAT (Ours)`: Decentralized edge intelligence with dual-arrow flow splitting.
-- **Crowd Scaling**: Adjust occupancy from 10 to 600 workers; trigger or silence the evacuation alarm.
+- **Crowd Scaling**: Adjust occupancy from 5 to 400 workers; trigger or silence the evacuation alarm.
 
 ---
 

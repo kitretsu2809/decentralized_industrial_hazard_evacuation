@@ -61,6 +61,7 @@ class SimulatorUIContractTests(unittest.TestCase):
             "policy-assurance", "facility-status", "floor-tabs",
             "camera-node-select", "camera-video-input", "btn-camera-upload",
             "camera-preview", "vector-hazard", "vector-crowd",
+            "building-layout-select",
         }
         self.assertTrue(required.issubset(ids))
 
@@ -98,6 +99,12 @@ class SimulatorUIContractTests(unittest.TestCase):
         self.assertIn('data-screen-section="perception"', self.html)
         self.assertIn("Video-to-routing data flow", self.html)
 
+    def test_facility_layout_selector_switches_real_backend_topology(self):
+        for layout_id in ("petrochemical", "hexagonal_cell", "u_shaped_hall"):
+            self.assertIn(f'value="{layout_id}"', self.html)
+        self.assertIn('action: "switch_layout"', self.javascript)
+        self.assertIn("populateLayoutSelect", self.javascript)
+
     def test_desktop_rails_scroll_without_expanding_the_viewport_grid(self):
         rail_rule = re.search(r"\.rail\s*\{(?P<body>.*?)\}", self.styles, re.DOTALL)
         self.assertIsNotNone(rail_rule)
@@ -107,6 +114,18 @@ class SimulatorUIContractTests(unittest.TestCase):
         self.assertIn("overflow-y: auto", declarations)
         self.assertIn("overflow-x: hidden", declarations)
         self.assertIn("scrollbar-gutter: stable", declarations)
+
+    def test_industrial_hmi_theme_uses_neutral_surfaces_and_sparse_state_colour(self):
+        self.assertIn("--bg: #202326", self.styles)
+        self.assertIn("--surface: #292d30", self.styles)
+        self.assertIn("--red: #d45b52", self.styles)
+        header_rule = re.search(r"\.app-header\s*\{(?P<body>.*?)\}", self.styles, re.DOTALL)
+        canvas_rule = re.search(r"\.canvas-wrap\s*\{(?P<body>.*?)\}", self.styles, re.DOTALL)
+        self.assertIsNotNone(header_rule)
+        self.assertIsNotNone(canvas_rule)
+        self.assertNotIn("gradient", header_rule.group("body"))
+        self.assertNotIn("gradient", canvas_rule.group("body"))
+        self.assertIn("style.css?v=3.4", self.html)
 
 
 if __name__ == "__main__":
