@@ -18,35 +18,37 @@ _REPO_DIR = _SIM_DIR.parent
 sys.path.insert(0, str(_REPO_DIR))
 
 
-def _load_project_sensor_checkpoint() -> None:
-    """Load the local checkpoint setting when launched outside Docker.
+def _load_project_model_settings() -> None:
+    """Load local perception model settings when launched outside Docker.
 
     Docker passes an absolute container path in compose.  For direct local
-    launches, reading this one setting keeps ``.env`` useful without adding a
-    runtime dependency on python-dotenv.  An explicitly exported environment
-    variable always takes precedence.
+    launches, reading these settings keeps ``.env`` useful without adding a
+    runtime dependency on python-dotenv. Explicitly exported environment
+    variables always take precedence.
     """
-    if os.environ.get("SENSOR_CNN_CHECKPOINT"):
-        return
     env_file = _REPO_DIR / ".env"
     if not env_file.is_file():
         return
+    checkpoint_keys = {"SENSOR_CNN_CHECKPOINT", "YOLO_MODEL_PATH"}
+    setting_keys = checkpoint_keys | {"YOLO_DEVICE", "ENABLE_HSV_FIRE_FALLBACK"}
     for raw_line in env_file.read_text().splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        if key.strip() != "SENSOR_CNN_CHECKPOINT":
+        key = key.strip()
+        if key not in setting_keys or os.environ.get(key):
             continue
         value = value.strip().strip("\"'")
-        checkpoint = Path(value)
-        if not checkpoint.is_absolute():
-            checkpoint = _REPO_DIR / checkpoint
-        os.environ["SENSOR_CNN_CHECKPOINT"] = str(checkpoint)
-        break
+        if key in checkpoint_keys:
+            checkpoint = Path(value)
+            if not checkpoint.is_absolute():
+                checkpoint = _REPO_DIR / checkpoint
+            value = str(checkpoint)
+        os.environ[key] = value
 
 
-_load_project_sensor_checkpoint()
+_load_project_model_settings()
 
 from simulator.engine.simulation import Simulation
 from simulator.perception import SimulatorPerceptionPipeline

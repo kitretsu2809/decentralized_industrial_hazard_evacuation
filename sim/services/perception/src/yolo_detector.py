@@ -27,10 +27,11 @@ class Detection:
     threat_type: Optional[ThreatType]
 
 class ThreatDetector:
-    def __init__(self, model_name: Optional[str] = None, confidence_threshold: float = 0.5):
+    def __init__(self, model_name: Optional[str] = None, confidence_threshold: float = 0.25):
         self.confidence_threshold = confidence_threshold
         self.model = None
         self.model_name = model_name or os.environ.get("YOLO_MODEL_PATH")
+        self.device = os.environ.get("YOLO_DEVICE", "cpu").strip() or "cpu"
         self.load_error = None
         if HAS_YOLO and self.model_name and Path(self.model_name).is_file():
             try:
@@ -51,6 +52,7 @@ class ThreatDetector:
             "available": self.is_available(),
             "opencv_available": HAS_CV2,
             "model": self.model_name if self.is_available() else None,
+            "device": self.device,
             "load_error": self.load_error,
         }
 
@@ -61,7 +63,7 @@ class ThreatDetector:
         if not self.is_available():
             return []
             
-        results = self.model(frame, verbose=False)
+        results = self.model.predict(frame, verbose=False, device=self.device)
         detections = []
         
         for r in results:

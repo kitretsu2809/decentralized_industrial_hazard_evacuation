@@ -61,6 +61,10 @@ sim/services/perception/data/videos/*.mp4
 sim/services/perception/data/videos/*.avi
 sim/services/perception/data/videos/*.mkv
 !sim/services/perception/data/videos/README.md
+demo_assets/*.mp4
+demo_assets/*.avi
+demo_assets/*.mkv
+!demo_assets/README.md
 
 # ─── FDS Fire Dynamics Exports ────────────────────────────────────────────────
 data/fds_exports/*.csv

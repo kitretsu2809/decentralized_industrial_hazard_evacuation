@@ -74,7 +74,7 @@ input:disabled {
   height: 64px;
   padding: 0 18px;
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) auto minmax(210px, 1fr);
+  grid-template-columns: minmax(250px, 1fr) auto auto minmax(170px, 0.8fr);
   align-items: center;
   gap: 16px;
   background:
@@ -84,6 +84,51 @@ input:disabled {
   position: relative;
   z-index: 20;
 }
+
+.screen-nav {
+  height: 36px;
+  padding: 3px;
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  background: rgba(2, 8, 12, 0.46);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.screen-nav-button {
+  min-width: 112px;
+  padding: 5px 9px;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transition: color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+}
+
+.screen-nav-button span {
+  margin-right: 5px;
+  color: var(--faint);
+  font: 700 8px ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.screen-nav-button:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.screen-nav-button.active {
+  color: var(--bg);
+  background: var(--cyan);
+  box-shadow: 0 5px 16px rgba(64, 201, 214, 0.16);
+}
+
+.screen-nav-button.active span { color: rgba(7, 16, 24, 0.6); }
 
 .brand,
 .header-status,
@@ -260,6 +305,36 @@ input:disabled {
   grid-template-columns: 286px minmax(480px, 1fr) 304px;
   overflow: hidden;
 }
+
+[data-screen-section] { display: none; }
+body[data-screen="operations"] [data-screen-section~="operations"],
+body[data-screen="scenario"] [data-screen-section~="scenario"],
+body[data-screen="perception"] [data-screen-section~="perception"] {
+  display: block;
+}
+
+body[data-screen="operations"] .rail-disclaimer,
+body[data-screen="scenario"] .rail-disclaimer,
+body[data-screen="perception"] .rail-disclaimer {
+  display: flex;
+}
+
+body[data-screen="scenario"] .workspace {
+  grid-template-columns: 330px minmax(520px, 1fr) 300px;
+}
+
+body[data-screen="perception"] .workspace {
+  grid-template-columns: 430px minmax(560px, 1fr);
+}
+
+body[data-screen="perception"] .rail-left {
+  background: linear-gradient(180deg, rgba(64, 201, 214, 0.025), transparent 42%), var(--surface);
+}
+
+body[data-screen="perception"] .rail-right { display: none; }
+body[data-screen="perception"] .perception-section { padding: 20px; }
+body[data-screen="perception"] .camera-preview-shell { min-height: 236px; }
+body[data-screen="perception"] .camera-preview-shell video { max-height: 300px; }
 
 .rail {
   min-width: 0;
@@ -652,6 +727,61 @@ input[type="range"]::-webkit-slider-thumb {
 .packet-readout span { color: var(--faint); text-transform: uppercase; letter-spacing: 0.4px; }
 .packet-readout strong { color: var(--cyan); font: 700 9px ui-monospace, monospace; text-align: right; }
 .packet-readout code { display: block; margin-top: 5px; color: #8caeb7; font-size: 7px; overflow-wrap: anywhere; }
+
+.perception-flow {
+  margin-top: 14px;
+  display: grid;
+  gap: 6px;
+}
+
+.perception-flow div {
+  min-height: 47px;
+  padding: 8px 9px;
+  display: grid;
+  grid-template-columns: 27px 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  align-items: center;
+  position: relative;
+  background: rgba(255, 255, 255, 0.022);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.perception-flow div:not(:last-child)::after {
+  content: "";
+  width: 1px;
+  height: 7px;
+  position: absolute;
+  left: 21px;
+  bottom: -7px;
+  z-index: 1;
+  background: rgba(64, 201, 214, 0.48);
+}
+
+.perception-flow span {
+  grid-row: 1 / 3;
+  width: 27px;
+  height: 27px;
+  display: grid;
+  place-items: center;
+  color: var(--cyan);
+  background: var(--cyan-soft);
+  border: 1px solid rgba(64, 201, 214, 0.32);
+  border-radius: 50%;
+  font: 800 8px ui-monospace, monospace;
+}
+
+.perception-flow strong {
+  color: #dbe8eb;
+  font-size: 10px;
+}
+
+.perception-flow small {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.35;
+}
 
 .compact-section h3 { margin-bottom: 12px; }
 .control-row {
@@ -1105,10 +1235,14 @@ canvas {
 
 @media (max-width: 1320px) {
   .workspace { grid-template-columns: 252px minmax(440px, 1fr) 278px; }
-  .app-header { grid-template-columns: minmax(220px, 1fr) auto minmax(170px, 1fr); }
+  .app-header { grid-template-columns: minmax(210px, 1fr) auto auto minmax(150px, 0.6fr); }
+  .screen-nav-button { min-width: 91px; padding-inline: 7px; }
+  .screen-nav-button span { display: none; }
   .status-pill.iot-pill { display: none; }
   .rail-section { padding: 13px; }
   .legend-group { gap: 7px; }
+  body[data-screen="scenario"] .workspace { grid-template-columns: 300px minmax(440px, 1fr) 278px; }
+  body[data-screen="perception"] .workspace { grid-template-columns: 390px minmax(500px, 1fr); }
 }
 
 @media (max-width: 1080px) {
@@ -1120,6 +1254,13 @@ canvas {
     top: 0;
     grid-template-columns: 1fr auto;
   }
+  .screen-nav {
+    grid-column: 1 / -1;
+    width: 100%;
+    margin: 0 0 9px;
+    order: 3;
+  }
+  .screen-nav-button { flex: 1; min-width: 0; }
   .header-status { display: none; }
   .workspace {
     height: auto;
@@ -1132,12 +1273,18 @@ canvas {
   .rail-left { order: 2; border-right: 0; border-top: 1px solid var(--line); }
   .rail-right { order: 3; border-left: 0; border-top: 1px solid var(--line); }
   .rail-disclaimer { align-self: stretch; }
+  body[data-screen="scenario"] .workspace,
+  body[data-screen="perception"] .workspace { grid-template-columns: 1fr; }
+  body[data-screen="perception"] .rail-right { display: none; }
+  body[data-screen="perception"] .rail-left { display: block; }
 }
 
 @media (max-width: 680px) {
   .app-header { padding: 9px 12px; }
   .brand-title { font-size: 13px; }
   .header-btn { display: none; }
+  .screen-nav { overflow-x: auto; }
+  .screen-nav-button { min-width: 104px; }
   .twin-stage { min-height: 590px; grid-template-rows: auto 1fr; }
   .stage-toolbar { min-height: 78px; padding: 10px; align-items: flex-start; gap: 8px; flex-direction: column; }
   .stage-controls { width: 100%; justify-content: space-between; }

@@ -136,6 +136,7 @@
 
   window.startAutomatedTour = function () {
     stopTour();
+    if (window.setWorkspaceScreen) window.setWorkspaceScreen("operations");
     overlay = document.createElement("div");
     overlay.className = "tour-overlay";
     overlay.addEventListener("click", stopTour);

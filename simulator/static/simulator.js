@@ -16,6 +16,12 @@ let previousRunState = null;
 let previousPolicyMode = null;
 let perceptionCapabilities = null;
 
+const WORKSPACE_SCREENS = {
+  operations: "Live facility view",
+  scenario: "Exercise configuration",
+  perception: "Node-mapped perception",
+};
+
 let currentFloor = 1;
 let clickedNode  = null;
 let hoverNode    = null;
@@ -34,6 +40,33 @@ function toScreen(wx, wy) {
 function toWorld(sx, sy) {
   return [(sx - viewPanX) / viewScale, (sy - viewPanY) / viewScale];
 }
+
+function setWorkspaceScreen(screen, updateLocation = true) {
+  const nextScreen = Object.prototype.hasOwnProperty.call(WORKSPACE_SCREENS, screen)
+    ? screen
+    : "operations";
+  document.body.dataset.screen = nextScreen;
+  document.querySelectorAll("[data-screen-target]").forEach(button => {
+    const active = button.dataset.screenTarget === nextScreen;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+    if (active) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+  const context = document.getElementById("workspace-context");
+  if (context) context.textContent = WORKSPACE_SCREENS[nextScreen];
+  tooltip.classList.remove("visible");
+  if (updateLocation && location.hash !== `#${nextScreen}`) {
+    history.replaceState(null, "", `#${nextScreen}`);
+  }
+  requestAnimationFrame(() => {
+    resizeCanvas();
+    fitBuilding(true);
+  });
+  return nextScreen;
+}
+
+window.setWorkspaceScreen = setWorkspaceScreen;
 
 // ── Canvas setup ───────────────────────────────────────────────────────────────
 const canvas  = document.getElementById("sim-canvas");
@@ -1554,8 +1587,17 @@ document.getElementById("camera-node-select").addEventListener("change", () => {
 
 document.getElementById("btn-fit").addEventListener("click", () => fitBuilding(true));
 
+document.querySelectorAll("[data-screen-target]").forEach(button => {
+  button.addEventListener("click", () => setWorkspaceScreen(button.dataset.screenTarget));
+});
+
+window.addEventListener("hashchange", () => {
+  setWorkspaceScreen(location.hash.slice(1), false);
+});
+
 // ── Init ───────────────────────────────────────────────────────────────────────
 window.addEventListener("resize", resizeCanvas);
+setWorkspaceScreen(location.hash.slice(1) || "operations", false);
 resizeCanvas();
 requestAnimationFrame(render);
 setConn(false);

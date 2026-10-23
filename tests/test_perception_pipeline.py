@@ -1,12 +1,30 @@
 import time
 import unittest
+from unittest.mock import patch
 
 from sim.services.perception.src.sensor_cnn import SensorAnomalyDetector
 from simulator.engine.simulation import Simulation
-from simulator.perception.video_pipeline import build_hazard_vector
+from simulator.perception.video_pipeline import SimulatorPerceptionPipeline, build_hazard_vector
 
 
 class PerceptionPipelineTests(unittest.TestCase):
+    def test_colour_only_fire_fallback_requires_explicit_opt_in(self):
+        class StubBackend:
+            backend_status = {"name": "stub", "available": True}
+
+        with patch.dict("os.environ", {"ENABLE_HSV_FIRE_FALLBACK": "false"}):
+            pipeline = SimulatorPerceptionPipeline(
+                on_update=lambda update: None,
+                sensor_provider=lambda node_id: (8.0, 24.0, 52.0),
+                detector=StubBackend(),
+                sensor_detector=StubBackend(),
+            )
+
+        status = pipeline.capabilities()["fire_fallback"]
+        self.assertFalse(status["available"])
+        self.assertFalse(status["configured"])
+        self.assertTrue(status["disclosed_fallback"])
+
     def test_hazard_vector_is_bounded_and_preserves_crowd_range(self):
         vector = build_hazard_vector(
             visual_hazard=1.4,

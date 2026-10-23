@@ -84,6 +84,13 @@ class SimulatorUIContractTests(unittest.TestCase):
         self.assertIn('id="packet-bits"', self.html)
         self.assertIn('id="packet-directions"', self.html)
 
+    def test_workspace_is_split_into_persistent_operational_screens(self):
+        for screen in ("operations", "scenario", "perception"):
+            self.assertIn(f'data-screen-target="{screen}"', self.html)
+        self.assertIn("setWorkspaceScreen", self.javascript)
+        self.assertIn('data-screen-section="perception"', self.html)
+        self.assertIn("Video-to-routing data flow", self.html)
+
 
 if __name__ == "__main__":
     unittest.main()

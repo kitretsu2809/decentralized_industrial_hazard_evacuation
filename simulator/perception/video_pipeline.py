@@ -1,12 +1,13 @@
 """Recorded-video perception pipeline used by the all-software demonstration.
 
 The pipeline deliberately keeps visual perception and temporal sensor anomaly
-detection as separate branches.  YOLO supplies object/person detections, the
-fire-colour heuristic supplies a disclosed fallback when a custom fire model is
-not present, and the 1D CNN is used only when trained weights are configured.
+detection as separate branches. YOLO supplies object/person detections, the
+fire-colour heuristic is an explicitly enabled and disclosed fallback, and the
+1D CNN is used only when trained weights are configured.
 """
 from __future__ import annotations
 
+import os
 import threading
 import time
 import uuid
@@ -28,6 +29,11 @@ from sim.services.perception.src.yolo_detector import (
 
 def _clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:
     return max(lower, min(upper, float(value)))
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = str(os.environ.get(name, "1" if default else "0")).strip().lower()
+    return value in {"1", "true", "yes", "on"}
 
 
 def build_hazard_vector(
@@ -108,6 +114,7 @@ class SimulatorPerceptionPipeline:
         self.sensor_provider = sensor_provider
         self.detector = detector or ThreatDetector()
         self.sensor_detector = sensor_detector or SensorAnomalyDetector()
+        self.enable_fire_fallback = _env_flag("ENABLE_HSV_FIRE_FALLBACK", default=False)
         self.inference_fps = max(0.2, min(10.0, float(inference_fps)))
         self.feeds: Dict[str, PerceptionFeed] = {}
         self.node_feeds: Dict[str, str] = {}
@@ -122,8 +129,9 @@ class SimulatorPerceptionPipeline:
             "visual_detector": self.detector.backend_status,
             "sensor_detector": self.sensor_detector.backend_status,
             "fire_fallback": {
-                "name": "HSV fire-colour heuristic",
-                "available": HAS_CV2,
+                "name": "HSV fire-colour heuristic (opt-in)",
+                "available": HAS_CV2 and self.enable_fire_fallback,
+                "configured": self.enable_fire_fallback,
                 "disclosed_fallback": True,
             },
         }
@@ -227,17 +235,18 @@ class SimulatorPerceptionPipeline:
                 visual_confidence = detection.confidence
                 hazard_type = detection.threat_type
 
-        fire_detected, fire_confidence = detect_fire_heuristic(frame)
-        if fire_detected:
-            fire_score = compute_detection_hazard(
-                ThreatType.FIRE.value,
-                fire_confidence,
-                get_threat_mapping(ThreatType.FIRE).base_hazard_score,
-            )
-            if fire_score > visual_hazard:
-                visual_hazard = fire_score
-                visual_confidence = fire_confidence
-                hazard_type = ThreatType.FIRE
+        if self.enable_fire_fallback:
+            fire_detected, fire_confidence = detect_fire_heuristic(frame)
+            if fire_detected:
+                fire_score = compute_detection_hazard(
+                    ThreatType.FIRE.value,
+                    fire_confidence,
+                    get_threat_mapping(ThreatType.FIRE).base_hazard_score,
+                )
+                if fire_score > visual_hazard:
+                    visual_hazard = fire_score
+                    visual_confidence = fire_confidence
+                    hazard_type = ThreatType.FIRE
 
         crowd_density = len(people) / float(feed.capacity)
         gas, temperature, humidity = self.sensor_provider(feed.node_id)

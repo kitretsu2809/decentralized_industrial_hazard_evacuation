@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#071018">
   <title>Industrial Evacuation Safety Digital Twin</title>
-  <link rel="stylesheet" href="/static/style.css?v=3.0">
+  <link rel="stylesheet" href="/static/style.css?v=3.1">
 </head>
-<body>
+<body data-screen="operations">
   <header class="app-header">
     <div class="brand" aria-label="Application identity">
       <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
@@ -16,6 +16,17 @@
         <div class="brand-title">Adaptive Evacuation Guidance</div>
       </div>
     </div>
+    <nav class="screen-nav" aria-label="Simulator screens">
+      <button class="screen-nav-button active" type="button" data-screen-target="operations" aria-selected="true">
+        <span>01</span>Operations
+      </button>
+      <button class="screen-nav-button" type="button" data-screen-target="scenario" aria-selected="false">
+        <span>02</span>Scenario lab
+      </button>
+      <button class="screen-nav-button" type="button" data-screen-target="perception" aria-selected="false">
+        <span>03</span>Perception &amp; packets
+      </button>
+    </nav>
     <div class="header-status" aria-label="Live system status">
       <div class="status-pill normal" id="facility-status">
         <span class="status-dot"></span><span id="facility-status-text">NORMAL OPERATIONS</span>
@@ -37,7 +48,7 @@
 
   <main class="workspace">
     <aside class="rail rail-left" aria-label="Incident controls">
-      <section class="rail-section command-section">
+      <section class="rail-section command-section" data-screen-section="operations scenario">
         <div class="section-heading">
           <div><span class="section-kicker">Incident command</span><h2 id="incident-phase">Monitoring</h2></div>
           <span class="phase-code" id="phase-code">S0</span>
@@ -61,7 +72,7 @@
         <div class="command-feedback" id="command-feedback" role="status" aria-live="polite"></div>
       </section>
 
-      <section class="rail-section">
+      <section class="rail-section" data-screen-section="scenario">
         <div class="section-title-row"><h3>Exercise scenario</h3><span class="tag simulation-tag">SIMULATION</span></div>
         <p class="field-note">Hazard injection is isolated to the digital twin and automatically raises the evacuation alarm.</p>
         <label class="field-label" for="node-select">Origin zone</label>
@@ -86,7 +97,7 @@
         <p class="field-note compact">Select a room on the map to target it directly.</p>
       </section>
 
-      <section class="rail-section perception-section">
+      <section class="rail-section perception-section" data-screen-section="perception">
         <div class="section-title-row">
           <h3>Node camera perception</h3>
           <span class="tag" id="perception-status">CHECKING</span>
@@ -124,9 +135,16 @@
           <code id="packet-bits">00000000000000000000000000000000</code>
         </div>
         <p class="field-note compact" id="perception-detail">Waiting for a node feed.</p>
+        <div class="perception-flow" aria-label="Video-to-routing data flow">
+          <div><span>01</span><strong>Video frame</strong><small>Recorded CCTV at the selected graph node</small></div>
+          <div><span>02</span><strong>YOLO detections</strong><small>Person boxes become a node crowd-density estimate</small></div>
+          <div><span>03</span><strong>Sensor fusion</strong><small>Visual evidence and 1D-CNN anomaly score form the hazard vector</small></div>
+          <div><span>04</span><strong>Mesh message</strong><small>Safety state and eight direction bits are packed into 32 bits</small></div>
+          <div><span>05</span><strong>Guidance policy</strong><small>Neighbour state contributes to the next sign action</small></div>
+        </div>
       </section>
 
-      <section class="rail-section compact-section">
+      <section class="rail-section compact-section" data-screen-section="scenario">
         <h3>Simulation parameters</h3>
         <div class="control-row">
           <label for="speed-slider">Time scale</label>
@@ -140,7 +158,7 @@
         </div>
       </section>
 
-      <div class="rail-disclaimer">
+      <div class="rail-disclaimer" data-screen-section="operations scenario perception">
         <span class="disclaimer-mark">i</span>
         Decision-support demonstrator. Field deployment requires site validation, certified alarm integration, and human incident command.
       </div>
@@ -149,7 +167,7 @@
     <section class="twin-stage" aria-label="Facility evacuation digital twin">
       <div class="stage-toolbar">
         <div>
-          <span class="section-kicker">Live facility view</span>
+          <span class="section-kicker" id="workspace-context">Live facility view</span>
           <div class="stage-title"><span id="facility-name">Petrochemical facility</span><span class="title-separator">/</span><span id="floor-context">Floor 1</span></div>
         </div>
         <div class="stage-controls">
@@ -196,7 +214,7 @@
     </section>
 
     <aside class="rail rail-right" aria-label="Operational metrics">
-      <section class="rail-section kpi-section">
+      <section class="rail-section kpi-section" data-screen-section="operations">
         <div class="section-title-row"><h3>Life-safety status</h3><span class="tag" id="accountability-tag">LIVE</span></div>
         <div class="hero-kpi">
           <div><span>Accounted safe</span><strong id="m-accounted">0%</strong></div>
@@ -211,7 +229,7 @@
         </div>
       </section>
 
-      <section class="rail-section">
+      <section class="rail-section" data-screen-section="operations">
         <h3>Population movement</h3>
         <div class="population-row"><span><i class="state-swatch normal"></i>At station</span><strong id="m-normal">—</strong></div>
         <div class="population-bar"><span id="bar-normal"></span></div>
@@ -223,7 +241,7 @@
         <div class="population-bar"><span id="bar-evacuated"></span></div>
       </section>
 
-      <section class="rail-section policy-section">
+      <section class="rail-section policy-section" data-screen-section="operations scenario">
         <div class="section-title-row"><h3>Guidance controller</h3><span class="tag" id="policy-assurance">CHECKING</span></div>
         <label class="field-label" for="sign-policy-select">Operational routing mode</label>
         <select id="sign-policy-select">
@@ -240,18 +258,18 @@
         </dl>
       </section>
 
-      <section class="rail-section incident-section">
+      <section class="rail-section incident-section" data-screen-section="operations scenario">
         <div class="section-title-row"><h3>Active incidents</h3><span class="count-badge" id="incident-count">0</span></div>
         <div class="incident-list" id="active-incidents"><div class="empty-state">No active hazard zones</div></div>
       </section>
-      <section class="rail-section event-section">
+      <section class="rail-section event-section" data-screen-section="scenario">
         <h3>Operator event log</h3>
         <ol class="event-log" id="event-log"><li><time>00:00</time><span>Console initialized</span></li></ol>
       </section>
     </aside>
   </main>
 
-  <script src="/static/simulator.js?v=3.0"></script>
-  <script src="/static/tour_controller.js?v=3.0"></script>
+  <script src="/static/simulator.js?v=3.1"></script>
+  <script src="/static/tour_controller.js?v=3.1"></script>
 </body>
 </html>
