@@ -328,7 +328,7 @@ class MAPPOTrainer:
             (dummy_embedding, dummy_mask),
             output_path,
             export_params=True,
-            opset_version=14,
+            opset_version=18,
             do_constant_folding=True,
             input_names=['embedding', 'action_mask'],
             output_names=['edge_logits', 'door_logits', 'vertical_logits'],
