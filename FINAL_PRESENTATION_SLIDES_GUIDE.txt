@@ -1,0 +1,1343 @@
+====================================================================================================
+LAB BASED PROJECT (LBP) FINAL ASSESSMENT — PRESENTATION & SLIDE CREATION MASTER GUIDE
+Project Title: TBA-GAT WITH DELTA BIT-MASKING: INTELLIGENT DECENTRALISED EMERGENCY EVACUATION FOR INDUSTRIAL FACILITIES
+Authors: Hrushikesh Waghmare & Amareswar Nagam (Department of Physics, IIT Roorkee)
+Supervisor: Prof. Sudip Roy (Associate Professor, Dept. of Computer Science & Engineering | CoEDMM, IIT Roorkee)
+Repository Location: /home/kitretsu/Desktop/LBP
+Generated Date: October 2026
+====================================================================================================
+
+HOW TO USE THIS MASTER GUIDE:
+----------------------------------------------------------------------------------------------------
+This document provides a slide-by-slide blueprint for assembling your final LBP assessment PowerPoint
+presentation. Each slide specification contains:
+  1. Slide Number & Formal Title
+  2. Core Objective & Takeaway (What evaluators must understand in the first 10 seconds)
+  3. Visual Layout & Slide Content (Exact text blocks, formulas, tables, and bullet points)
+  4. Existing Asset Locations & Placement Instructions (Exact paths to PNGs, PDFs, MP4s, code files)
+  5. Word-for-Word Presenter Script (Spoken narration written for confident, authoritative delivery)
+  6. Evaluator Anticipated Questions & Bulletproof Defense Answers (Tough questions Prof. Roy and
+     the committee might ask, with rigorous theoretical and empirical rebuttals)
+
+Presentation Summary:
+  - Duration: 20 Minutes (15 min presentation + 5 min Q&A)
+  - Slide Count: 18 Slides (Chronological & Logical Progression)
+  - Key Themes: Edge Intelligence, 32-Bit Delta Gossip, Continuous Social Force Dynamics,
+                Learned Flow Splitting, Zero-Device Pedestrian Compliance, Hardware Reflexive Safety.
+
+====================================================================================================
+SLIDE 1: TITLE & FRONT MATTER
+====================================================================================================
+[SLIDE METADATA]
+- Slide Type: Title Slide
+- Category: Overview / Formal Introduction
+
+[CORE OBJECTIVE]
+Establish immediate academic rigor, clarify the project scope (industrial life-safety evacuation,
+not generic pathfinding), and introduce the supervision under Prof. Sudip Roy.
+
+[VISUAL LAYOUT & SLIDE CONTENT]
+----------------------------------------------------------------------------------------------------
+MAIN TITLE (Bold, 32pt):
+  TBA-GAT WITH DELTA BIT-MASKING: INTELLIGENT DECENTRALISED EMERGENCY EVACUATION FOR INDUSTRIAL FACILITIES
+
+SUBTITLE (20pt, Accent Color):
+  Fault-Tolerant Edge Graph Intelligence, 32-Bit Delta Gossip, and Learned Multi-Corridor Flow Splitting
+
+METADATA BLOCK (14pt):
+  • Presenters:
+      - Hrushikesh Waghmare (Dept. of Physics, IIT Roorkee | waghmare_hr@ph.iitr.ac.in)
+      - Amareswar Nagam (Dept. of Physics, IIT Roorkee | amareswar_n@ph.iitr.ac.in)
+  • Supervisor:
+      - Prof. Sudip Roy (Associate Professor, CSE & Joint Faculty, CoEDMM, IIT Roorkee)
+  • Institutional Affiliation:
+      - Indian Institute of Technology Roorkee (IITR)
+  • Project Context:
+      - Lab Based Project (LBP) Final Assessment Defense — Autumn 2026
+
+TAGLINE BADGES:
+  [Decentralized MARL]  [32-Bit Gossip PDU]  [Continuous SFM Physics]  [Sub-20ms Hardware Safety]
+
+[EXISTING ASSETS & PLACEMENT]
+• Primary Assets:
+  - IIT Roorkee Official Crest / Department Logo (top-right or header)
+  - Background: Clean, modern industrial dark slate or crisp white academic theme
+• Reference Document:
+  - /home/kitretsu/Downloads/vertopal.com_LBP_Assesment_Docs.pdf (Page 1 front matter)
+
+[PRESENTER SCRIPT]
+"Good morning, respected Professor Sudip Roy sir, and members of the assessment committee. Today,
+Amareswar and I are proud to present our Lab-Based Project titled 'TBA-GAT with Delta Bit-Masking:
+Intelligent Decentralised Emergency Evacuation for Industrial Facilities.'
+
+In modern petrochemical refineries and high-hazard manufacturing plants, evacuation is a matter of life
+and death. When an explosion or toxic gas leak occurs, conventional centralized building management
+systems fail precisely at the moment they are needed most. Today, we present an end-to-end,
+physically grounded, decentralized edge intelligence system that guarantees life-safety routing even
+when up to 50% of facility communications are destroyed."
+
+[DEFENSE Q&A PREPARATION]
+• Question: "Why is a Physics undergraduate group working on Graph Neural Networks and Industrial Safety?"
+• Bulletproof Answer: "Industrial evacuation is fundamentally a complex socio-physical non-equilibrium
+  transport problem. It couples continuous crowd dynamics—governed by Langevin-type equations in the
+  Helbing Social Force Model—with atmospheric gas diffusion PDEs and discrete topological graph theory.
+  By bridging physical force modeling with decentralized Graph Attention Networks and embedded edge
+  hardware under the guidance of Prof. Roy, we solve the physical bottleneck of evacuation jamming."
+
+====================================================================================================
+SLIDE 2: INDUSTRIAL HAZARD EVACUATION — THE CRITICAL PROBLEM
+====================================================================================================
+[SLIDE METADATA]
+- Slide Type: Problem Statement & Motivation
+- Category: Context & Industrial Relevance
+
+[CORE OBJECTIVE]
+Demonstrate why industrial evacuation is fundamentally harder than commercial building egress, citing
+real-world catastrophic chemical/refinery disasters to prove industrial necessity.
+
+[VISUAL LAYOUT & SLIDE CONTENT]
+----------------------------------------------------------------------------------------------------
+HEADER:
+  The Industrial Crisis: Why Standard Evacuation Fails in High-Hazard Facilities
+
+THREE-COLUMN COMPARISON CARDS:
+  1. The Physical Environment:
+     - 3D complex multi-floor geometry, steel grating, high-temperature reactors, chemical pipelines.
+     - Blind corners, narrow catwalks (1.2m - 2.0m width), acoustic deafening (>90 dBA ambient alarms).
+     - Evacuees wear heavy Personal Protective Equipment (PPE) limiting peripheral vision.
+
+  2. The Hazard Dynamics:
+     - Non-linear atmospheric dispersion of toxic gases (Hydrofluoric Acid HF, Hydrogen Sulfide H2S, CO).
+     - Thermal flash fires with temperatures >800°C; multi-floor stack-effect vertical propagation.
+     - Fractional Effective Dose (FED): Inhaling toxic plume causes loss of consciousness in <60 seconds.
+
+  3. The Human Factor:
+     - Panic stampedes, herding mentality, and arching/jamming at exit bottlenecks.
+     - Pedestrians have NO personal smartphones or GPS tracking in Class 1 Div 1 hazardous zones.
+     - Compliance is purely visual: evacuees strictly follow illuminated overhead signage.
+
+CASE STUDY CALLOUT BOX (Red Accent):
+  • Bhopal Gas Tragedy (1984): Over 3,800 fatalities due to unguided egress into dense methyl isocyanate plume.
+  • Texas City Refinery Explosion (2005): 15 workers killed; OSHA cited failure of dynamic evacuation routes.
+
+[EXISTING ASSETS & PLACEMENT]
+• Primary Assets:
+  - Photo / Diagram of industrial refinery layout or disaster plume:
+    PROGRESS/PPT/system_architecture_flowchart.png (Top tier showing physical plant context)
+  - Figure from LaTeX document:
+    Figure 3: Corridor-Aligned Social Force Model (/home/kitretsu/Downloads/vertopal.com_LBP_Assesment_Docs.pdf)
+
+[PRESENTER SCRIPT]
+"To understand our motivation, consider what happens in a chemical refinery when a toxic reactor vessel
+ruptures. Unlike an office building where people calmly walk down stairs, industrial plants present
+lethal atmospheric hazards. A release of Hydrofluoric acid or carbon monoxide forms a dense, moving
+toxic plume. Inhaling this plume incapacitates a human in under sixty seconds according to ISO 13571.
+
+Furthermore, workers in hazardous zones cannot carry mobile phones or GPS devices due to explosive
+atmosphere regulations. They navigate exclusively by observing illuminated emergency signage at ceiling
+junctions. If signage points them into an advancing toxic cloud, or herds everyone into a single narrow
+stairwell, catastrophic crushing and mass toxic exposure are inevitable."
+
+[DEFENSE Q&A PREPARATION]
+• Question: "Why can't workers just use an evacuation mobile app on their smartphones?"
+• Bulletproof Answer: "Under OSHA, ATEX, and NFPA 70 Class I, Division 1 regulations, consumer mobile
+  phones are strictly prohibited inside chemical process units because non-intrinsically-safe batteries
+  and RF sparks can ignite flammable vapors. Signage-based directional guidance is the only universally
+  compliant mechanism for industrial life-safety."
+
+====================================================================================================
+SLIDE 3: FAILURE MODES OF EXISTING PARADIGMS: STATIC VS CENTRALIZED
+====================================================================================================
+[SLIDE METADATA]
+- Slide Type: Critical Comparative Analysis
+- Category: State-of-the-Art Limitations
+
+[CORE OBJECTIVE]
+Deconstruct the two existing evacuation paradigms (Static NFPA vs Centralized SCADA) and prove why both
+fail catastrophically during real industrial disasters.
+
+[VISUAL LAYOUT & SLIDE CONTENT]
+----------------------------------------------------------------------------------------------------
+HEADER:
+  The Architectural Dilemma: Static Signage vs. Centralized SCADA Systems
+
+TWO-COLUMN CONTRAST TABLE:
+
+  DIMENSION               STATIC NFPA 101 SIGNS                 CENTRALIZED SCADA / SMART BMS
+  --------------------------------------------------------------------------------------------------
+  Hazard Awareness        Zero (Blind to fire, gas, smoke)      Global (Central server aggregates data)
+  Failure Mechanism       Routes workers into plumes/fires      Single Point of Failure (SPOF)
+  Communication Needs     None                                  Multi-hop bidirectional link integrity
+  Survivability @ 30%     35.7% (Fixed shortest paths)          21.9% (Death trap: outdated cached paths)
+  Latency Under Stress    Instantaneous (but wrong)             >68 ms (Network contention collapse)
+  Cost & Complexity       Low ($50 / sign)                      Prohibitive ($850+ / terminal + server)
+
+MATHEMATICAL BREAKDOWN OF CENTRALIZED COLLAPSE:
+  Round-Trip Telemetry Reliability Formula:
+    P_RTT = (1 - p_loss)^(2k)
+  Where:
+    k = average hop distance to central server (k = 3.2 in 36-node plant)
+    p_loss = link severance fraction (e.g., 30% cable/conduit tray destruction)
+    P_RTT = (1 - 0.30)^(6.4) = (0.70)^6.4 ≈ 10.1%
+
+THE 'STATIC SIGNAGE DEATH TRAP':
+  When 89.9% of dynamic signs lose server connection, they revert to static defaults.
+  The default geometric shortest path from the storage farm passes directly through Reactor Unit 2.
+  Result: Centralized systems perform WORSE than static signs under fire, driving survival down to 21.9%!
+
+[EXISTING ASSETS & PLACEMENT]
+• Primary Asset:
+  - docs/figures/graph_b_severed_comm_survival.png (Right half showing Centralized vs Static vs Ours)
+• Reference:
+  - docs/patent_simulation_evaluation_report.md (Section 4: Why Centralized Systems Collapse)
+
+[PRESENTER SCRIPT]
+"Industry currently relies on two extremes, both of which are fundamentally flawed. On one hand, static
+NFPA 101 green exit signs have zero environmental awareness. If a fire starts in corridor B, the sign
+continues pointing directly into the fire.
+
+On the other hand, modern 'Smart Building' systems connect signs to a centralized SCADA server or PLC.
+This introduces a catastrophic single point of failure. During a real explosion or fire, cable trays
+melt and structural collapse severs communication conduits. In our network model, with an average path
+length of 3.2 hops, a 30% link severance drops the round-trip packet delivery probability to just 10.1%.
+
+Nearly 90% of signs lose communication. They revert to static default paths that herd workers straight
+into the toxic gas plume. This is why, as our empirical experiments show, centralized systems collapse
+to an appalling 21.9% survival rate—performing even worse than dumb static signs!"
+
+[DEFENSE Q&A PREPARATION]
+• Question: "Why does centralized SCADA perform worse than static signs at 30% link loss?"
+• Bulletproof Answer: "Because static signs send workers on fixed shortest paths that have a constant
+  hazard probability (~35% survival). Centralized signs, when disconnected, revert to cached routes
+  that were calculated before the fire spread. Evacuees commit to paths assuming the server will update
+  them downstream, but the severed link creates a dead-end trap right inside the gas cloud."
+
+====================================================================================================
+SLIDE 4: LITERATURE REVIEW & FUNDAMENTAL RESEARCH GAPS
+====================================================================================================
+[SLIDE METADATA]
+- Slide Type: Academic Literature Review
+- Category: Related Work & Theoretical Grounding
+
+[CORE OBJECTIVE]
+Critically evaluate the three key research papers studied during project formulation, identifying their
+breakthroughs and the exact research gaps our project addresses.
+
+[VISUAL LAYOUT & SLIDE CONTENT]
+----------------------------------------------------------------------------------------------------
+HEADER:
+  Literature Review: Three Cornerstones of Decentralized Multi-Agent Routing
+
+PAPER 1: Ding & Pournaras (2025)
+  • Title: 'Decentralized Multi-agent Reinforcement Learning for Resilient Critical Infrastructures'
+  • Venue: School of Computer Science, University of Leeds & LUT University Finland
+  • Key Insight: Proved that decentralized MARL is structurally aligned with infrastructure resilience
+    (no SPOF, local autonomy, privacy). Identified Credit Assignment and Communication as the two core bottlenecks.
+  • Gap: Pure position/survey paper—no empirical simulation, no physical building geometry, and no
+    continuous human crowd dynamics.
+
+PAPER 2: Scientific Reports (Nature Springer, 2026)
+  • Title: 'Decentralized Graph Attention Multi-Agent RL for Adaptive Urban Traffic Routing (MA-GRL)'
+  • Venue: Scientific Reports 16:17337 (2026)
+  • Key Insight: GATv2 encoder + CTDE MAPPO achieved 11.1% travel time reduction; coordination reward
+    penalized simultaneous route switches, preventing herding oscillation; 4x faster perturbation recovery.
+  • Gap: Formulated strictly for macroscopic vehicular traffic in SUMO. Vehicles do not crush or suffocate;
+    completely lacks microscopic crowd physics, toxic inhalation modeling, or hardware safety overrides.
+
+PAPER 3: PLOS ONE (June 2025)
+  • Title: 'GAT-Based Multi-Agent Path Finding via Temporal-Spatial Information Aggregation'
+  • Authors: Zhang, Wang, Ni, Liu (PLOS ONE, 2025)
+  • Key Insight: Coupled GRU temporal memory with GAT spatial attention. Accuracy +47% vs spatial-only GAT;
+    time efficiency +73%. Proved that temporal state history is mandatory to avoid repeated routing mistakes.
+  • Gap: Evaluated only on discrete 2D grid maps with imitation learning (PRIMAL). Transmits continuous
+    embeddings; assumes perfect communication; zero industrial life-safety compliance.
+
+SYNTHESIS TABLE — THE UNADDRESSED RESEARCH GAP:
+  FEATURE                     DING (2025)   MA-GRL (2026)   GAT-MAPF (2025)   OUR LBP SYSTEM
+  ---------------------------------------------------------------------------------------------
+  Decentralized Graph MARL        Yes            Yes              Yes              YES
+  Temporal Recurrent Memory        No             No              Yes              YES (GRU)
+  Continuous SFM Crowd Physics     No             No               No              YES (Helbing)
+  Toxic Dose Inhalation (FED)      No             No               No              YES (ISO 13571)
+  Ultra-Low Bandwidth Gossip       No             No               No              YES (32-Bit PDU)
+  Learned Flow Splitting           No             No               No              YES (37 Actions)
+  Hardware Reflexive Safety        No             No               No              YES (<20ms Cutoff)
+
+[EXISTING ASSETS & PLACEMENT]
+• Primary Assets from PROGRESS/PPT/:
+  - PROGRESS/PPT/Paper1_Decentralized_MARL_Resilient_Critical_Infrastructures.pptx
+  - PROGRESS/PPT/Paper2_Decentralized_GAT_MARL_Urban_Traffic_Routing.pptx
+  - PROGRESS/PPT/Paper3_GAT_MARL_PathFinding_Temporal_Spatial.pptx
+• LaTeX Citations:
+  - Section 3 of /home/kitretsu/Downloads/vertopal.com_LBP_Assesment_Docs.pdf
+
+[PRESENTER SCRIPT]
+"To ground our work in contemporary research, we conducted an exhaustive review of three milestone papers.
+In 2025, Ding and Pournaras published a seminal framework establishing that decentralized MARL is the
+only viable paradigm for resilient critical infrastructure. However, they identified two critical
+unsolved challenges: communication bandwidth and spatial credit assignment.
+
+In 2026, Nature's Scientific Reports published MA-GRL, demonstrating that Graph Attention Networks
+combined with CTDE could route urban traffic with 4x faster recovery. But urban cars operate under
+traffic lights—they do not suffer stampedes, crush asphyxia, or toxic gas inhalation.
+
+Finally, PLOS ONE published GAT-MAPF in 2025, proving that combining a GRU temporal encoder with GAT
+spatial attention boosts routing accuracy by 47%. Yet, all these models transmit bulky continuous
+embedding tensors across wireless links, which causes immediate radio collapse on industrial hardware.
+Our project bridges this precise gap by uniting temporal-spatial graph attention with a 32-bit delta
+gossip protocol and continuous socio-physical dynamics."
+
+[DEFENSE Q&A PREPARATION]
+• Question: "How is your credit assignment different from Ding & Pournaras?"
+• Bulletproof Answer: "Ding & Pournaras noted that decentralized agents act greedily, dumping congestion
+  downstream. We solve this via a Centralized Critic during training that evaluates a spatial crowd
+  congestion variance reward R_cong and doorway crush penalty R_jam, penalizing any agent that creates
+  a localized bottleneck."
+
+====================================================================================================
+SLIDE 5: RESEARCH OBJECTIVES & CORE SYSTEM NOVELTIES
+====================================================================================================
+[SLIDE METADATA]
+- Slide Type: Research Objectives & Novelty Claims
+- Category: Intellectual Property & Scientific Contribution
+
+[CORE OBJECTIVE]
+Define the four primary research objectives and present the 5 distinct, defensible novel contributions
+of our co-designed software-hardware architecture.
+
+[VISUAL LAYOUT & SLIDE CONTENT]
+----------------------------------------------------------------------------------------------------
+HEADER:
+  Research Objectives and Defensible System Novelties
+
+RESEARCH OBJECTIVES:
+  1. Design a decentralized edge intelligence system that eliminates single points of failure.
+  2. Synthesize an ultra-compact radio communication protocol compatible with IEEE 802.15.4 meshes.
+  3. Formulate a multi-agent reinforcement learning policy capable of autonomous crowd flow-splitting.
+  4. Implement a deterministic hardware life-safety layer guaranteeing zero false-safe routing.
+
+THE FIVE CORE ARCHITECTURAL NOVELTIES:
+
+  [NOVELTY 1] O(|N_i|) Topology-Bounded Graph Attention:
+    Unlike standard global GNNs requiring O(N^2) computation, each edge node executes attention strictly
+    over its immediate physical 1-hop corridors. Inference is O(|N_i|) (≤8 neighbors), scaling infinitely
+    regardless of facility size.
+
+  [NOVELTY 2] 32-Bit (4-Byte) Sparse Delta-Bitmap Gossip:
+    Nodes NEVER transmit high-dimensional neural embeddings (h ∈ R^64) over the air. Instead, they emit
+    a compact 32-bit bitmask payload ONLY when local hazard or crowd density changes (|ΔH| > ε).
+
+  [NOVELTY 3] Learned Multi-Corridor Flow Splitting (37 Discrete Actions):
+    Moving beyond single-arrow greedy exits, our policy outputs dual-corridor illumination combinations
+    (C(8,2) = 28 pairs), dynamically splitting approaching crowd streams to prevent fatal doorway crush.
+
+  [NOVELTY 4] Pure Signboard-Driven Pedestrian Compliance:
+    Zero dependency on evacuee personal devices, WiFi triangulation, or BLE beacons. Evacuees obey
+    overhead illuminated dynamic signboards based on visual ray-casting in the Social Force Model.
+
+  [NOVELTY 5] Sub-20ms Deterministic Hardware Reflexive Override:
+    A dedicated hardware logic comparator sits beneath the neural stack. If onboard sensors detect
+    H_v ≥ θ_crit (0.35), a physical relay immediately cuts the green arrow and displays a red 'NO ENTRY',
+    bypassing the OS, neural model, and radio network in <20 milliseconds.
+
+[EXISTING ASSETS & PLACEMENT]
+• Primary Assets:
+  - docs/PATENT_SPECIFICATION_AND_CLAIMS.md (Claims 1, 2, 3, 5, 7)
+  - docs/FOUNDATIONAL_AUDIT.md
+• Figure from LaTeX:
+  - Figure 4: Structure of the compact 32-bit sparse delta message
+
+[PRESENTER SCRIPT]
+"Based on these research gaps, we formulated five core contributions that form our patent disclosure.
+First, we achieve O(|N_i|) topology-bounded attention: an edge sign computes attention only over its
+physical neighbors, meaning inference time is identical whether the factory has 10 nodes or 10,000.
+
+Second, we solve the wireless bandwidth crisis. Conventional distributed AI exchanges 64-dimensional
+floating-point vectors—that is 256 bytes per node. We completely eliminate representation sharing.
+Our nodes emit only a 32-bit physical delta packet.
+
+Third, our action space introduces learned multi-corridor flow splitting. Instead of single green arrows
+that channel everyone into the same choke point, our policy learns to illuminate dual green arrows,
+splitting the human flow down parallel raceways.
+
+Finally, we guarantee safety through a sub-20ms hardware reflexive override. If local gas sensors detect
+critical toxicity, a hardware comparator overrides the neural network and cuts power to the green LED,
+locking out the corridor in under 20 milliseconds."
+
+[DEFENSE Q&A PREPARATION]
+• Question: "Is a 4-byte packed bitmask patentable by itself?"
+• Bulletproof Answer: "No, and we explicitly acknowledge that. Modbus, CAN Bus, and Zigbee have used
+  bitfields for decades. Our patent claim is on the co-design: using a 4-byte physical delta gossip PDU
+  to trigger on-device recurrent GRU hidden state transitions, coupled with a deterministic hardware
+  logic bypass. It is the physical-cyber co-design that constitutes novelty."
+
+====================================================================================================
+SLIDE 6: END-TO-END SYSTEM ARCHITECTURE (6-TIER DECOUPLED STACK)
+====================================================================================================
+[SLIDE METADATA]
+- Slide Type: System Architecture Flowchart
+- Category: Methodology & System Engineering
+
+[CORE OBJECTIVE]
+Walk through the complete 6-tier system architecture, explaining how physical sensing, edge perception,
+distributed radio mesh, physics digital twin, MARL policy, and physical actuation interlock.
+
+[VISUAL LAYOUT & SLIDE CONTENT]
+----------------------------------------------------------------------------------------------------
+HEADER:
+  The 6-Tier Decoupled Edge Architecture
+
+DIAGRAM LAYOUT (Stack of 6 Horizontal Cards):
+
+  ┌────────────────────────────────────────────────────────────────────────────────────────┐
+  │ TIER 6: DYNAMIC SIGNAGE ACTUATION & HMI DASHBOARD                                      │
+  │ • ISO 7010 LED Matrix & High-Contrast E-Ink Displays • 8 Compass Directional Slots     │
+  │ • Anti-Flicker Bimodal Attractor Hysteresis • WebSocket Real-Time Telemetry Bridge    │
+  ├────────────────────────────────────────────────────────────────────────────────────────┤
+  │ TIER 5: DECENTRALIZED MARL POLICY ENGINE (ST-TBA-GAT)                                  │
+  │ • O(|N_i|) Topology-Bounded GATv2 Spatial Attention • INT8 Manhattan Metric Scoring   │
+  │ • On-Device GRU Temporal Memory (h ∈ ℝ⁶⁴) • Categorical 37-Action Flow-Splitter        │
+  ├────────────────────────────────────────────────────────────────────────────────────────┤
+  │ TIER 4: CONTINUOUS PHYSICS DIGITAL TWIN (SIMULATOR ENGINE)                            │
+  │ • Helbing Social Force Model (SFM) • Corridor Centerline Projection & Lookahead        │
+  │ • Weidmann Bottleneck Speed Curve • ISO 13571 Fractional Effective Dose (FED) Gas     │
+  ├────────────────────────────────────────────────────────────────────────────────────────┤
+  │ TIER 3: DISTRIBUTED RADIO MESH EVENT BUS (IEEE 802.15.4 / THREAD)                     │
+  │ • 32-Bit (4-Byte) Sparse Delta-Bitmap PDU • Event-Triggered Broadcast (|ΔH| > ε)      │
+  │ • 1-Hop Local Neighbor Scoping • Zero representation transmission over the air         │
+  ├────────────────────────────────────────────────────────────────────────────────────────┤
+  │ TIER 2: MULTI-MODAL EDGE PERCEPTION & ANOMALY DETECTOR                                │
+  │ • YOLOv8 / YOLOv11 Crowd Density Counter • 1D-CNN Multi-Sensor Temporal Anomaly        │
+  │ • PSCS-I Photorealistic Synthetic Dataset Benchmark • HSV Fire/Smoke Fallback         │
+  ├────────────────────────────────────────────────────────────────────────────────────────┤
+  │ TIER 1: PHYSICAL & SIMULATED SENSING HARDWARE                                          │
+  │ • MQ-Series Toxic Gas Sensors (CO, H2S, VOC) • MLX90614 Non-Contact Infrared Thermal   │
+  │ • Sub-20ms Analog Hardware Comparator • Standalone LiFePO4 Battery Backup             │
+  └────────────────────────────────────────────────────────────────────────────────────────┘
+
+[EXISTING ASSETS & PLACEMENT]
+• Primary Master Image:
+  - PROGRESS/PPT/system_architecture_flowchart.png (Full slide width or center visual)
+• Alternative High-Res PDF/Vector:
+  - LaTeX Figure 1: /home/kitretsu/Downloads/vertopal.com_LBP_Assesment_Docs.pdf (Page 6)
+• Cross-Reference Document:
+  - PROGRESS/PPT/LBP_Architecture_and_Data_Flow_Report.pdf
+
+[PRESENTER SCRIPT]
+"This slide illustrates our full six-tier decoupled system architecture. At Tier 1 and 2, physical and
+camera sensors capture environmental conditions. Rather than raw data streaming, edge perception models
+like our 1D-CNN temporal anomaly detector and lightweight YOLO crowd counter extract compact metrics.
+
+Tier 3 is our distributed radio mesh operating over IEEE 802.15.4. Instead of continuous telemetry,
+nodes emit our proprietary 32-bit delta PDU only when an environmental delta threshold is crossed.
+
+Tier 4 contains our high-fidelity digital twin that simulates continuous pedestrian force interactions
+and toxic gas inhalation under ISO 13571 standards.
+
+Tier 5 is the ST-TBA-GAT neural inference engine running locally on each edge sign, maintaining its own
+temporal GRU memory. Finally, Tier 6 actuates the dynamic directional LED arrows, governed by a bimodal
+hysteresis filter that completely eliminates disorienting signage flickering."
+
+[DEFENSE Q&A PREPARATION]
+• Question: "What happens if Tier 5 (the neural network) crashes or freezes?"
+• Bulletproof Answer: "Tier 1 contains a dedicated analog/hardware comparator circuit wired directly to
+  the power rails of the green LED arrows. If toxic gas crosses the critical threshold θ_crit, the
+  hardware relay opens and forces the sign into a red 'NO ENTRY' state within 20 milliseconds, completely
+  bypassing Tier 2, 3, 4, and 5."
+
+====================================================================================================
+SLIDE 7: FACILITY GRAPH MODELING & MULTI-TOPOLOGY INDUSTRIAL BENCHMARKS
+====================================================================================================
+[SLIDE METADATA]
+- Slide Type: Environmental Modeling & Topologies
+- Category: Methodology & Digital Twin Setup
+
+[CORE OBJECTIVE]
+Explain the mathematical graph representation G=(V,E), the physical topology mask M_ij, and introduce
+the three industrial benchmark layouts implemented in our simulator.
+
+[VISUAL LAYOUT & SLIDE CONTENT]
+----------------------------------------------------------------------------------------------------
+HEADER:
+  Facility Graph Representation & Three Industrial Benchmark Topologies
+
+GRAPH FORMULATION:
+  • Facility Graph: G = (V, E)
+    - V: Vertices representing intersections, corridors, rooms, stairwells, and muster exits.
+    - E: Edges representing walkable corridors with physical length d_ij and width w_ij.
+  • Physical Topology Masking Matrix (M_ij ∈ {0, 1}):
+    - M_ij = 1 if a physically unobstructed corridor connects node i and node j.
+    - M_ij = 0 if separated by walls, machinery, or structural barriers.
+    - Mathematical Benefit: Masks out invalid attention weights, preventing spurious edge routing.
+
+EIGHT-DIRECTION DETERMINISTIC COMPASS SLOTS:
+  • Every corridor at a junction is assigned to one of 8 compass slots:
+    [0: N,  1: NE,  2: E,  3: SE,  4: S,  5: SW,  6: W,  7: NW]
+  • Vertical stairwells are mapped deterministically (Up = North, Down = South).
+  • Guarantees that action index, signboard arrows, and communication bitmasks share identical indexing.
+
+THE THREE SELECTABLE INDUSTRIAL BENCHMARK TOPOLOGIES:
+  1. Petrochemical Refinery (`petrochemical`):
+     - 3 floors, 36 junctions/rooms, 53 conduits, 4 muster assembly exits.
+     - Features: Distillation columns, reactor units, vertical stairwells, complex cross-floor stack effects.
+  2. Cellular Manufacturing Hall (`hexagonal_cell`):
+     - Single large-span industrial floor with automated robotic workcells in honeycomb formation.
+     - Features: High-density criss-cross corridors, multiple competing exits, rapid choke propagation.
+  3. High-Bay Logistics Hall (`u_shaped_hall`):
+     - Massive continuous warehousing bay with central racking obstacles and peripheral raceways.
+     - Features: Extreme bottleneck exits at loading docks; severe crowd stampede vulnerability.
+
+[EXISTING ASSETS & PLACEMENT]
+• Primary Assets:
+  - Code reference: sim/services/environment/src/floorplan_generator.py (lines 135, 321, 384)
+  - Figure from LaTeX: Figure 2: Industrial Facility Graph Representation G=(V,E) and Topology Masking M_ij
+• Screenshot / Render:
+  - Simulator Dark-Theme Canvas showing Petrochemical 3-Floor Graph vs Hexagonal Cell
+
+[PRESENTER SCRIPT]
+"To rigorously evaluate our system, we model industrial plants as a mathematical graph G=(V,E). A crucial
+mathematical safeguard is our Physical Topology Masking Matrix M_ij. In generic Graph Neural Networks,
+attention can propagate between geometrically close nodes even if a concrete wall separates them. Our
+mask strictly enforces that attention only propagates through walkable corridors.
+
+Furthermore, we unified all spatial representations into eight deterministic compass slots: North,
+Northeast, East, Southeast, South, Southwest, West, and Northwest.
+
+In our latest codebase update, we implemented three realistic industrial benchmarks: First, a three-floor
+petrochemical refinery with distillation units and stairwells; second, a hexagonal cellular manufacturing
+hall with honeycomb workcells; and third, a high-bay U-shaped logistics warehouse with severe bottleneck
+loading docks. This proves our policy generalizes across diverse industrial architectures."
+
+[DEFENSE Q&A PREPARATION]
+• Question: "How do you handle stairwells in a 2D compass direction system?"
+• Bulletproof Answer: "As implemented in core/graph/directions.py, vertical links between co-located nodes
+  use the North slot for upward travel and South for downward travel. When planar corridors compete for
+  the same slot, deterministic collision resolution assigns the nearest adjacent free slot by neighbor ID."
+
+====================================================================================================
+SLIDE 8: DIGITAL TWIN & CONTINUOUS-SPACE CROWD SIMULATION ENGINE
+====================================================================================================
+[SLIDE METADATA]
+- Slide Type: Physics & Crowd Dynamics
+- Category: Digital Twin & Modeling Fidelity
+
+[CORE OBJECTIVE]
+Present the continuous Helbing Social Force Model, corridor centerline projection, Weidmann speed curve,
+and ISO 13571 toxic inhalation physics that govern our digital twin.
+
+[VISUAL LAYOUT & SLIDE CONTENT]
+----------------------------------------------------------------------------------------------------
+HEADER:
+  Physics-Grounded Digital Twin: Continuous Crowd & Toxic Gas Inhalation Dynamics
+
+CONTINUOUS SOCIAL FORCE MODEL (SFM) — HELBING FORMULATION:
+  m_i * (d v_i / dt) = F_i^goal + F_i^wall + ∑_{j ≠ i} F_ij^rep + F_i^flee
+
+  1. Goal-Directed Driving Force (F_i^goal):
+     F_i^goal = m_i * (v_0 * e_i^des - v_i) / τ
+     Pedestrians steer toward a lookahead point P_i^look along corridor centerline vector u.
+
+  2. Corridor Boundary Force (F_i^wall):
+     Exponential repulsion from corridor walls preventing clipping and unnatural cornering.
+
+  3. Inter-Pedestrian Repulsion (F_ij^rep):
+     Socio-psychological and physical contact forces causing panic crushing and arching at doorways.
+
+  4. Hazard Repulsion Force (F_i^flee):
+     F_i^flee = - ∇ H(x, y) — pedestrians actively recoil from visible smoke and flames.
+
+WEIDMANN VELOCITY-DENSITY BOTTLENECK CURVE:
+  v(ρ) = v_0 * [1 - exp(-γ * (1/ρ - 1/ρ_jam))]
+  As crowd density ρ exceeds 3.5 persons/m², pedestrian velocity drops toward zero, modeling fatal crush.
+
+ISO 13571 FRACTIONAL EFFECTIVE DOSE (FED) TOXIC INHALATION:
+  FED(t) = ∫_0^t [ C_gas(t') / LC_50 ] dt' + ∫_0^t [ Q_thermal(t') / Q_crit ] dt'
+  • When FED ≥ 1.0: Evacuee suffers acute toxic incapacitation (casualty recorded).
+  • Realistic gas dispersion modeled via 2D Gaussian advection-diffusion PDEs.
+
+[EXISTING ASSETS & PLACEMENT]
+• Primary Assets:
+  - LaTeX Figure 3: Corridor-Aligned Social Force Model (/home/kitretsu/Downloads/vertopal.com_LBP_Assesment_Docs.pdf)
+  - PROGRESS/PPT/data_structures_and_flow_chart.png (Pedestrian Agent State & Force Vector pipeline)
+• Script Reference:
+  - simulator/engine/simulation.py (Continuous pedestrian update loop)
+
+[PRESENTER SCRIPT]
+"A deep learning policy is only as credible as the simulator it is trained on. Unlike simplistic grid-world
+simulators where agents jump cell to cell, we built a continuous-space socio-physical digital twin.
+
+Pedestrian movement is governed by Helbing's Social Force Model. Each individual has mass, physical
+momentum, and velocity. To ensure agents navigate realistic corridors without snagging corners, we
+implemented a corridor centerline projection algorithm with dynamic lookahead steering.
+
+Crowd throttling follows the empirical Weidmann velocity-density curve: as density exceeds 3.5 persons
+per square meter, flow drops exponentially due to shoulder-to-shoulder jamming.
+
+Crucially, we implemented ISO 13571 Fractional Effective Dose modeling. As pedestrians move through
+the plant, they accumulate toxic gas and thermal doses over time. If their cumulative FED reaches 1.0,
+they suffer acute incapacitation. This provides an unforgeable, physically validated survival metric."
+
+[DEFENSE Q&A PREPARATION]
+• Question: "Why did you use Helbing Social Force instead of Cellular Automata?"
+• Bulletproof Answer: "Cellular Automata discretize space into rigid grid cells, which completely misses
+  continuous fluid-like panic phenomena—such as arching at narrow doorways, lateral pressure waves,
+  and corner jamming. Helbing's differential equations accurately reproduce these real-world crush dynamics."
+
+====================================================================================================
+SLIDE 9: MULTI-MODAL EDGE PERCEPTION & ANOMALY DETECTION
+====================================================================================================
+[SLIDE METADATA]
+- Slide Type: Edge Perception & Computer Vision
+- Category: Edge Intelligence Pipeline
+
+[CORE OBJECTIVE]
+Showcase our multi-modal edge perception pipeline: YOLO crowd counting using photorealistic synthetic
+datasets, 1D-CNN temporal sensor anomaly fusion, and video demo assets.
+
+[VISUAL LAYOUT & SLIDE CONTENT]
+----------------------------------------------------------------------------------------------------
+HEADER:
+  Multi-Modal Edge Perception: Vision Crowd Counting & Temporal Sensor Fusion
+
+TWO-COLUMN PIPELINE BREAKDOWN:
+
+  COLUMN 1: VISUAL CROWD PERCEPTION (YOLOv8 / YOLOv11)
+  • Hardware Target: Jetson Orin Nano / ESP32-CAM Edge Nodes.
+  • Dataset Benchmark: PSCS-I (Photorealistic Synthetic Crowds Simulation in Indoor Environments, IEEE Access 2025).
+  • Video Asset: 12-second high-density crowd evacuation clip (`demo_assets/pscs_i_crowd_demo_12s.mp4`).
+  • Inference Pipeline:
+    - Real-time bounding box person detection.
+    - Density estimation: ρ = (Count * A_person) / (W_corridor * L_corridor).
+    - Quantization into 8-bit density scalar (0–255) for gossip packaging.
+  • Color Fallback: HSV color-segmentation fallback for direct flame and heavy smoke detection.
+
+  COLUMN 2: 1D-CNN TEMPORAL MULTI-SENSOR ANOMALY FUSION
+  • Problem: Optical smoke alarms take up to 90 seconds to trigger in high-ceiling halls.
+  • Architecture: 1D Convolutional Neural Network operating on a 10-timestep sliding window.
+  • Input Channels (5D Time-Series):
+    [CO (ppm),  CO2 (ppm),  VOC (ppb),  Temperature (°C),  Differential Pressure (Pa)]
+  • Operation:
+    - Captures rapid rate-of-change (dC/dt, dT/dt) signatures characteristic of early flare-ups.
+    - Emits a fused scalar hazard score H_v ∈ [0.0, 1.0] in <5 ms.
+    - Catches hidden chemical leaks and smoldering insulation long before visual flame breakout.
+
+[EXISTING ASSETS & PLACEMENT]
+• Primary Assets:
+  - Video Clip: demo_assets/pscs_i_crowd_demo_12s.mp4 (Embed or display screenshot with YOLO bounding boxes)
+  - Reference Documentation: demo_assets/README.md & docs/SENSOR_CNN_TRAINING.md
+  - Model weights: data/models/yolo11n.pt
+
+[PRESENTER SCRIPT]
+"Edge nodes cannot make intelligent routing decisions without situational awareness. We designed a dual-mode
+perception pipeline combining computer vision with temporal sensor anomaly detection.
+
+For visual crowd estimation, we integrated Ultralytics YOLOv8 and YOLOv11. Because gathering real panic
+footage in chemical plants is dangerous, we benchmarked our detector against the PSCS-I photorealistic
+synthetic crowd dataset generated in Unreal Engine 5. We have a 12-second demonstration video embedded
+in our HMI camera rail that performs real-time person detection, estimating corridor crowd density.
+
+In parallel, optical smoke alarms are notoriously slow in high-bay industrial halls. We trained a
+lightweight 1D-CNN that fuses a 5-channel time-series of carbon monoxide, VOCs, temperature, and pressure
+over a 10-step rolling window. By detecting the multivariate rate-of-change signature of chemical flare-ups,
+our 1D-CNN identifies fires and gas leaks up to 60 seconds earlier than conventional smoke detectors."
+
+[DEFENSE Q&A PREPARATION]
+• Question: "Can an ESP32 microcontroller run YOLO?"
+• Bulletproof Answer: "No. As detailed in our physical installation guide, vision nodes at critical junctions
+  use a Jetson Orin Nano or Raspberry Pi CM4 perception gateway. Standard observer nodes use an ESP32-S3
+  that runs our lightweight 1D-CNN temporal sensor fusion in INT8, consuming under 64 KB of RAM."
+
+====================================================================================================
+SLIDE 10: 32-BIT (4-BYTE) SPARSE DELTA GOSSIP PROTOCOL & MESH LAYER
+====================================================================================================
+[SLIDE METADATA]
+- Slide Type: Embedded Communication Protocol
+- Category: Network Engineering & Embedded Systems
+
+[CORE OBJECTIVE]
+Provide an exhaustive bit-level walkthrough of our 32-bit (4-byte) sparse gossip PDU, explaining why
+it prevents radio channel saturation and how it triggers local GRU updates.
+
+[VISUAL LAYOUT & SLIDE CONTENT]
+----------------------------------------------------------------------------------------------------
+HEADER:
+  The 32-Bit (4-Byte) Sparse Delta Gossip Protocol
+
+BIT-FIELD PACKET STRUCTURE (Exact 4-Byte PDU Layout):
+
+  ┌────────────────┬────────────────┬────────────────┬──────────┬──────────┬──────────┐
+  │ BITS 0 .. 7    │ BITS 8 .. 15   │ BITS 16 .. 23  │ 24 .. 27 │ 28 .. 29 │ 30 .. 31 │
+  ├────────────────┼────────────────┼────────────────┼──────────┼──────────┼──────────┤
+  │ DIRECTION MASK │ HAZARD SCORE   │ CROWD DENSITY  │ HAZ_TYPE │ VERSION  │ TTL HOPS │
+  │ (8 Compass Dir)│ (Quantized H)  │ (Quantized ρ)  │ (4 Bits) │ (2 Bits) │ (2 Bits) │
+  │ 1 Byte         │ 1 Byte         │ 1 Byte         │ 4 Bits   │ 2 Bits   │ 2 Bits   │
+  └────────────────┴────────────────┴────────────────┴──────────┴──────────┴──────────┘
+
+DETAILED BIT ALLOCATION BREAKDOWN:
+  • Bits 0–7 (Safe Corridor Mask):
+    One bit for each compass direction [N, NE, E, SE, S, SW, W, NW].
+    '1' indicates the corridor is physically walkable and safe; '0' indicates blocked/hazardous.
+  • Bits 8–15 (Fused Hazard Score H_v):
+    Quantized value: round(min(1.0, H_v) * 255). Resolves 0.004 unit hazard gradations.
+  • Bits 16–23 (Crowd Density ρ_v):
+    Quantized crowd value: round(min(2.0, ρ_v) / 2.0 * 255).
+  • Bits 24–27 (Hazard Classification Code):
+    [0: None, 1: Fire, 2: Smoke, 3: Gas/Toxic, 4: Chemical Spill, 5: Collapse, 6: Explosion].
+  • Bits 28–29 (Protocol Version): Supports future backward-compatible firmware upgrades (v1).
+  • Bits 30–31 (Time-To-Live / Hop Count): Limits flooding to strictly 1-hop or 2-hop local clusters.
+
+EVENT-TRIGGERED TRANSMISSION RULES:
+  • An edge node emits a packet ONLY when:
+      |H_current - H_last_transmitted| > ε_H (0.05)   OR   |ρ_current - ρ_last_transmitted| > ε_ρ (0.10)
+  • Quiescent Heartbeat: 0.1 Hz (one packet per 10 seconds during normal operations).
+  • Result: Eliminates 98% of unnecessary network traffic compared to continuous GNN broadcasting!
+
+[EXISTING ASSETS & PLACEMENT]
+• Primary Assets:
+  - Code Implementation: core/communication/hazard_packet.py & embedded/common/hazard_packet.h
+  - Diagram: LaTeX Figure 4: Structure of the compact 32-bit sparse delta message
+  - Documentation: docs/COMMUNICATION_PACKET.md
+
+[PRESENTER SCRIPT]
+"Here we reveal the exact bit-level engineering of our 32-bit sparse delta gossip packet, implemented
+identically in Python for simulation and C++ for embedded firmware.
+
+Byte 0 allocates one bit to each of the eight compass corridor directions. If a corridor becomes blocked
+by fire, its bit flips to zero.
+Byte 1 contains the 8-bit quantized hazard score from our sensor fusion layer.
+Byte 2 packs the 8-bit quantized crowd density from our vision pipeline.
+Byte 3 splits into a 4-bit hazard classification code—distinguishing between toxic gas, fire, and structural
+collapse—followed by a 2-bit protocol version and a 2-bit TTL hop counter.
+
+Critically, this packet is event-triggered. Nodes do not spam the radio medium. A packet is transmitted
+only when local hazard changes by more than 0.05 or crowd density changes by more than 0.10. In idle
+conditions, nodes send a single keepalive every 10 seconds. This single design decision prevents radio
+contention collapse."
+
+[DEFENSE Q&A PREPARATION]
+• Question: "Why did you limit the packet to exactly 4 bytes (32 bits)?"
+• Bulletproof Answer: "32 bits fits into a single native register on ARM Cortex-M and ESP32 microcontrollers.
+  More importantly, over IEEE 802.15.4 at 250 kbps, a 4-byte payload with standard headers creates a
+  tiny 20-byte physical frame. This takes only 0.64 milliseconds of radio airtime, completely avoiding
+  the packet fragmentation that destroys standard distributed GNNs."
+
+====================================================================================================
+SLIDE 11: ST-TBA-GAT NEURAL POLICY ARCHITECTURE
+====================================================================================================
+[SLIDE METADATA]
+- Slide Type: Deep Learning / Model Architecture
+- Category: MARL Policy Engine
+
+[CORE OBJECTIVE]
+Explain the Spatio-Temporal Topology-Bounded Attention Graph Network (ST-TBA-GAT), showing how GATv2
+spatial attention and GRU temporal recurrent memory combine on microcontrollers.
+
+[VISUAL LAYOUT & SLIDE CONTENT]
+----------------------------------------------------------------------------------------------------
+HEADER:
+  ST-TBA-GAT: Spatio-Temporal Topology-Bounded Attention Graph Network
+
+NEURAL PIPELINE FLOWCHART:
+
+  [Local 1-Hop Neighbor Gossip (32-Bit PDUs)] + [Onboard Sensor Feats x_i]
+                           │
+                           ▼
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │ 1. SPATIAL GRAPH ATTENTION LAYER (GATv2 with Physical Masking)        │
+  │ • Attention coefficient between node i and neighbor j:                 │
+  │     e_ij = LeakyReLU( a^T [ W_s h_i || W_t h_j || W_e e_ij ] )          │
+  │ • Physical Masking: α_ij = Softmax_j( e_ij + log(M_ij) )               │
+  │ • INT8 Quantization: Manhattan distance scoring on edge MCU             │
+  │ • Topology Bounded: O(|N_i|) complexity (≤ 8 neighbors)                │
+  └────────────────────────────────────────────────────────────────────────┘
+                           │
+                           ▼ Spatial Context Representation s_i^(t)
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │ 2. TEMPORAL RECURRENT MEMORY (Gated Recurrent Unit — GRU)              │
+  │ • Updates hidden state: h_i^(t) = GRU( s_i^(t), h_i^(t-1) )            │
+  │ • Hidden State Dimension: h_i ∈ ℝ⁶⁴                                     │
+  │ • Captures temporal momentum: remembers advancing gas plumes           │
+  └────────────────────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │ 3. DECENTRALIZED ACTOR HEAD & BIMODAL HYSTERESIS FILTER                │
+  │ • Categorical Actor: Softmax over 37 discrete routing actions          │
+  │ • Bimodal Attractor Hysteresis:                                        │
+  │     Sign arrow switches ONLY if π(a_new) > π(a_old) + Δ_hysteresis     │
+  │ • Eliminates visual flickering and evacuee hesitation at junctions     │
+  └────────────────────────────────────────────────────────────────────────┘
+
+[EXISTING ASSETS & PLACEMENT]
+• Primary Assets:
+  - LaTeX Figure 5: ST-TBA-GAT Neural Pipeline and Bimodal Attractor Hysteresis
+  - Code: agents/gat_policy.py & tests/test_st_gat_policy.py
+  - Pre-trained checkpoint: checkpoints/best_policy.pt (28 PyTorch state dict parameter tensors)
+
+[PRESENTER SCRIPT]
+"Now let us examine the neural architecture executing on each edge node: the ST-TBA-GAT model.
+Inference proceeds in three stages.
+
+First, the spatial aggregation stage uses a modified GATv2 attention mechanism. Crucially, the attention
+coefficients are masked by our physical topology matrix M_ij. Nodes separated by concrete barriers
+receive negative infinity attention. On embedded microcontrollers, we replace expensive floating-point
+softmax exponents with quantized INT8 Manhattan distance attention scoring.
+
+Second, spatial representations pass into a Gated Recurrent Unit (GRU) with a 64-dimensional hidden
+state. As proved in our literature review of the 2025 PLOS ONE paper, spatial attention alone is
+'short-sighted.' The GRU gives each sign temporal memory—allowing it to recognize whether a toxic plume
+is expanding toward it or receding.
+
+Third, the actor head outputs a distribution over our 37 categorical actions. To prevent dangerous visual
+flickering—where signs rapidly alternate between left and right arrows as smoke drifts—we introduced a
+bimodal attractor hysteresis filter. A sign will only toggle direction if the new action's probability
+exceeds the incumbent action by a significant hysteresis margin."
+
+[DEFENSE Q&A PREPARATION]
+• Question: "Why use GATv2 instead of standard GAT?"
+• Bulletproof Answer: "In standard GAT (Veličković et al., 2018), the attention mechanism is static:
+  the ranking of attention weights does not depend on the query node's state. GATv2 computes dynamic
+  attention, meaning an edge sign can adjust which neighbor it pays attention to based on its own
+  internal hazard state."
+
+====================================================================================================
+SLIDE 12: ACTION SPACE & LEARNED MULTI-CORRIDOR FLOW-SPLITTING
+====================================================================================================
+[SLIDE METADATA]
+- Slide Type: Action Formulation & Reinforcement Learning Novelty
+- Category: MARL Innovation
+
+[CORE OBJECTIVE]
+Detail the 37-action categorical space, explain the mathematical combination C(8,2)=28 for dual-arrow
+flow splitting, and illustrate how this prevents crowd stampedes and doorway crush.
+
+[VISUAL LAYOUT & SLIDE CONTENT]
+----------------------------------------------------------------------------------------------------
+HEADER:
+  The 37-Categorical Action Space & Learned Flow-Splitting Mechanics
+
+MATHEMATICAL DERIVATION OF THE 37-ACTION SPACE:
+  For an 8-compass-direction junction (N, NE, E, SE, S, SW, W, NW):
+
+  Action Category             Count           Formula             Meaning
+  --------------------------------------------------------------------------------------------------
+  Single Corridor Actions       8             K = 8               Direct all flow down 1 compass corridor
+  Standby / Neutral Action      1             1                   Maintain default static exit sign
+  Dual Flow-Split Actions      28             C(8, 2) = (8*7)/2   Illuminate TWO green arrows simultaneously
+  --------------------------------------------------------------------------------------------------
+  TOTAL DISCRETE ACTIONS       37             8 + 1 + 28 = 37     Complete categorical action space
+
+WHY DUAL FLOW-SPLITTING IS A LIFE-SAVING BREAKTHROUGH:
+  • The Conventional Problem (Single Arrow):
+    When 200 workers flee a gas release, a single green arrow herds the entire crowd into Corridor East.
+    At doorway bottlenecks (w = 1.5m), density spikes to >4.5 persons/m².
+    Result: Pedestrian velocity drops to near zero; arching and crush asphyxiation occur.
+
+  • Our Learned Flow-Splitting Solution (Dual Arrows):
+    When the policy detects high approaching density (ρ > 1.8), it outputs a dual action
+    (e.g., Action 15: East + Southeast).
+    Pedestrians at the junction naturally partition proportionally based on visual angle and local density.
+    Result: Crowd flow divides across two parallel paths. Doorway density remains at 2.1 persons/m²,
+    maintaining free-flow exit velocity (v ≈ 1.2 m/s) and completely eliminating crush casualties!
+
+ZERO-DEVICE PEDESTRIAN COMPLIANCE:
+  • Pedestrians do NOT run an optimization algorithm.
+  • In the simulator, agents calculate their desired walking angle θ_des based on illuminated signboard arrows.
+  • When two arrows are illuminated, pedestrians take the less congested visual branch.
+
+[EXISTING ASSETS & PLACEMENT]
+• Primary Assets:
+  - Code reference: core/policy/routing_actions.py (lines 18–35)
+  - Visual diagram: Illustrated fork junction showing single arrow jam vs dual arrow smooth flow
+• Reference Data:
+  - assets/evaluation_summary.json (Crush casualties: 0.00 across all GAT-MARL runs)
+
+[PRESENTER SCRIPT]
+"One of the major breakthroughs introduced in our latest codebase update is learned multi-corridor
+flow splitting. Prior reinforcement learning systems only chose a single exit corridor. In high-density
+industrial plants, this causes disastrous herding: hundreds of workers rush down the same hallway,
+creating fatal crush bottlenecks at exit doors.
+
+To solve this, we formulated a 37-choice categorical action space:
+Actions 0 through 7 represent single illuminated arrows for each compass direction.
+Action 8 is standby.
+Actions 9 through 36 enumerate all twenty-eight pairwise combinations—calculated as 8 choose 2.
+
+When our ST-TBA-GAT network detects high approaching crowd density, it illuminates dual green arrows—for
+instance, East and Southeast simultaneously. Because evacuees comply visually, the approaching human
+stream naturally bifurcates into two parallel raceways. This cuts doorway density in half, keeping
+pedestrian speed above 1.2 meters per second and driving crush casualties to exactly zero in our tests."
+
+[DEFENSE Q&A PREPARATION]
+• Question: "Why not allow 3 or 4 simultaneous illuminated arrows?"
+• Bulletproof Answer: "Illuminating 3 or 4 arrows creates visual ambiguity and cognitive overload for
+  panicked evacuees, violating ISO 7010 emergency signage standards. Limiting actions to at most two
+  diverging directions provides clear fork-choice guidance while preventing invalid commands."
+
+====================================================================================================
+SLIDE 13: MULTI-AGENT TRAINING PIPELINE (MAPPO WITH CTDE)
+====================================================================================================
+[SLIDE METADATA]
+- Slide Type: Reinforcement Learning Training
+- Category: Training Methodology & Curriculum
+
+[CORE OBJECTIVE]
+Explain the Centralized Training with Decentralized Execution (CTDE) paradigm, the centralized critic,
+the multi-objective reward function, and the 4-stage monotonic curriculum.
+
+[VISUAL LAYOUT & SLIDE CONTENT]
+----------------------------------------------------------------------------------------------------
+HEADER:
+  Multi-Agent PPO: Centralized Training, Decentralized Execution (CTDE)
+
+CTDE PARADIGM ARCHITECTURE:
+  • Offline Training Phase (Centralized):
+    - A Global Centralized Critic V(s_all) has access to the full plant state, including hidden gas
+      concentrations, all evacuee coordinates, and complete mesh connectivity.
+    - Guides policy gradient updates using Generalized Advantage Estimation (GAE).
+  • Online Deployment Phase (Decentralized):
+    - The Global Critic is COMPLETELY DISCARDED.
+    - Each edge sign executes its local Actor policy π(a_i | o_i) using ONLY its onboard sensors
+      and 1-hop 32-bit delta gossip packets from adjacent rooms.
+
+FOUR-STAGE MONOTONIC CURRICULUM TRAINING:
+  1. Stage 1 (Static Single-Source Fire):
+     Small localized heat source, static network. Policy learns basic geometric obstacle avoidance.
+  2. Stage 2 (Dynamic Toxic Gas Dispersion):
+     Gaussian advection plume spreading across floors. Policy learns to anticipate plume trajectory via GRU.
+  3. Stage 3 (High-Density Stampedes & Chokepoints):
+     120 to 250 evacuees. High-density spawning. Policy learns learned flow-splitting to avoid doorway crush.
+  4. Stage 4 (Stochastic Link Severance & Multi-Hazard):
+     Random 0–50% link cuts, simultaneous fire and gas flare-ups. Policy masters decentralized robustness.
+
+MULTI-OBJECTIVE REWARD FORMULATION:
+  R_total = R_evac + R_cong + R_jam + R_hazard + R_time
+  • R_evac = +10.0 per survivor reaching a muster point.
+  • R_cong = -2.0 * Var(ρ_corridors) (Penalizes uneven crowd distribution across hallways).
+  • R_jam  = -5.0 * ∑ max(0, ρ_door - 3.5)² (Severe quadratic penalty for doorway crush density).
+  • R_hazard = -50.0 per toxic or thermal casualty (ISO 13571 FED ≥ 1.0).
+  • R_time = -0.05 per elapsed simulation timestep (Incentivizes rapid facility clearing).
+
+[EXISTING ASSETS & PLACEMENT]
+• Primary Assets:
+  - Master Diagram: PROGRESS/PPT/training_and_application_flowchart.png
+  - LaTeX Figure 6: CTDE MAPPO Training Architecture (/home/kitretsu/Downloads/vertopal.com_LBP_Assesment_Docs.pdf)
+  - Trained Model Checkpoint: checkpoints/best_policy.pt
+
+[PRESENTER SCRIPT]
+"Training decentralized agents in non-stationary environments is notoriously difficult. We solve this
+using Multi-Agent PPO under the Centralized Training, Decentralized Execution (CTDE) framework.
+
+During offline training on our GPU workstation, a Centralized Critic observes the entire facility state—it
+sees through walls, monitors every worker's coordinates, and tracks full gas concentration gradients.
+This eliminates multi-agent non-stationarity. But once training is complete, the critic is discarded.
+The deployed edge sign has zero global knowledge; it executes purely on local 1-hop observations.
+
+To stabilize learning, we formulated a 4-stage monotonic curriculum, progressing from simple localized
+fires up to severe multi-hazard disasters with 50% communication destruction.
+
+Our reward function directly addresses the credit assignment challenge. We reward evacuation throughput,
+but heavily penalize corridor density variance and doorway crush jamming. This forces the agents to
+collaborate—sacrificing local shortcuts to maintain smooth global crowd flow."
+
+[DEFENSE Q&A PREPARATION]
+• Question: "Why does CTDE not violate decentralization during deployment?"
+• Bulletproof Answer: "CTDE only uses global state to evaluate value baselines for gradient updates
+  during backpropagation. The actor network's forward inference mathematical graph has zero dependency
+  on the critic. At deployment, the actor's input tensor contains only local 1-hop sensor data."
+
+====================================================================================================
+SLIDE 14: EXPERIMENTAL EVALUATION I: WIRELESS SCALABILITY & AIRTIME (GRAPH A)
+====================================================================================================
+[SLIDE METADATA]
+- Slide Type: Empirical Networking Results
+- Category: Experimental Proof-of-Concept
+
+[CORE OBJECTIVE]
+Present the rigorous IEEE 802.15.4 physical layer network simulation results (Graph A), proving that
+standard distributed GNNs suffer catastrophic channel collapse while our 32-bit protocol succeeds.
+
+[VISUAL LAYOUT & SLIDE CONTENT]
+----------------------------------------------------------------------------------------------------
+HEADER:
+  Experiment A: Wireless Mesh Scalability & Radio Airtime Contention
+
+PHYSICAL LAYER TESTBED PARAMETERS (IEEE 802.15.4 Standard @ 2.4 GHz):
+  • RF Channel Bandwidth: 250 kbps (Industrial Zigbee / WirelessHART / Thread mesh standard).
+  • Max Physical MTU: 127 Bytes (116 Bytes effective MAC payload).
+  • MAC Contention: CSMA/CA with slotted binary exponential backoff.
+  • Testbed Scale: 36 industrial nodes swept from 0.5 to 5.0 incident flare-ups per second.
+
+NUMERICAL COMPARISON TABLE (Standard GNN vs. Our 32-Bit Delta Gossip):
+
+  PERFORMANCE METRIC              STANDARD DISTRIBUTED GNN      OUR 32-BIT DELTA GOSSIP     IMPROVEMENT
+  ------------------------------------------------------------------------------------------------------
+  Payload per Update              256 Bytes (float32 h ∈ ℝ⁶⁴)    4 Bytes (Packed Bitmask)    98.4% reduction
+  Physical Frame On-Air           304 Bytes (3 Fragments)       20 Bytes (Single Frame)     93.4% reduction
+  Raw Radio Airtime               9.73 milliseconds             0.64 milliseconds           15.2x faster
+  Packet Collision Rate (CSMA/CA) 83.2% (Channel Collapse)      1.6% (Clear Channel)        52x lower collisions
+  Mean End-to-End Latency         68.0 milliseconds             0.9 milliseconds            98.7% faster
+  NFPA 20ms Real-Time Limit       FAILED (+48ms violation)      PASSED (0.9 ms << 20 ms)    Deterministic Safety
+
+KEY PHYSICAL INSIGHT FOR EXAMINERS:
+  • Standard GNNs require 3 separate packets per node update due to the 127B MTU limit.
+  • When 36 nodes report an emergency, 108 fragmented packets contend simultaneously.
+  • CSMA/CA backoff timers compound exponentially, causing packet queues to overflow and latency to hit 68ms.
+  • Our 4-byte gossip fits into a single 20B frame, clearing the channel in 0.64 ms with 1.6% collisions!
+
+[EXISTING ASSETS & PLACEMENT]
+• Primary Assets:
+  - Graph Image: docs/figures/graph_a_scalability_airtime.png (Left panel or large central plot)
+  - Master Figure: docs/figures/figure_combined_comparisons.png (Panel A)
+  - Simulation Script: scripts/simulate_patent_comparisons.py (Experiment A function)
+
+[PRESENTER SCRIPT]
+"A fundamental question evaluators ask is: 'Why can't you just run standard distributed GNNs on industrial
+sensors?' Slide 14 provides the empirical networking answer.
+
+We modeled a realistic IEEE 802.15.4 wireless mesh—the physical standard behind ZigBee, Thread, and
+WirelessHART operating at 250 kbps. In standard distributed GNN literature, nodes exchange 64-dimensional
+feature embeddings. At 4 bytes per float, that is 256 bytes. But the maximum transmission unit of an
+802.15.4 frame is only 127 bytes. Each update must be fragmented into three physical packets.
+
+When an emergency occurs and 36 nodes transmit simultaneously, the wireless channel collapses. Graph A
+proves that standard GNNs suffer an 83.2% packet collision rate, with latency climbing to 68 milliseconds—
+catastrophically violating the NFPA 20-millisecond life-safety threshold.
+
+In sharp contrast, our 32-bit delta gossip packs into a single 20-byte physical frame. Raw on-air
+transmission takes just 0.64 milliseconds. Even under heavy 5 Hz flare-ups, our collision rate remains
+at 1.6%, and latency is under one millisecond—comfortably satisfying hard real-time life safety standards."
+
+[DEFENSE Q&A PREPARATION]
+• Question: "Why didn't you use WiFi (802.11) instead of 802.15.4 to get higher bandwidth?"
+• Bulletproof Answer: "Industrial emergency systems cannot depend on WiFi. During chemical plant fires,
+  mains power is immediately cut to prevent electrical explosions. Battery-powered emergency signage must
+  operate for hours on backup batteries. IEEE 802.15.4 draws milliwatts of power, whereas WiFi exhausts
+  batteries rapidly and cannot penetrate heavy steel reactor containment vessels."
+
+====================================================================================================
+SLIDE 15: EXPERIMENTAL EVALUATION II: EVACUATION SURVIVAL UNDER LINK SEVERANCE (GRAPH B)
+====================================================================================================
+[SLIDE METADATA]
+- Slide Type: Empirical Safety & Survival Results
+- Category: Experimental Proof-of-Concept
+
+[CORE OBJECTIVE]
+Present the evacuation survival results under progressive 0% to 50% communication link destruction (Graph B),
+proving that our decentralized architecture maintains >90% survival while centralized systems collapse.
+
+[VISUAL LAYOUT & SLIDE CONTENT]
+----------------------------------------------------------------------------------------------------
+HEADER:
+  Experiment B: Evacuation Survival under Progressive Communication Destruction
+
+TEST SCENARIO CONFIGURATION:
+  • Testbed: 3-Floor Petrochemical Refinery (36 Rooms/Intersections, 53 Physical Conduits, 120 Workers).
+  • Injected Incident: High-intensity toxic Hydrofluoric (HF) gas leak at Reactor Unit 1 (Intensity 0.90).
+  • Stress Test: Random physical communication link destruction swept across 0%, 10%, 20%, 30%, 40%, 50%.
+  • Evaluated Baselines: Static NFPA 101 Signs vs. Centralized SCADA Server vs. Our ST-TBA-GAT Edge System.
+
+EMPIRICAL SURVIVAL RATE BENCHMARK TABLE (Mean ± 95% Confidence Interval):
+
+  COMMUNICATION LINKS SEVERED     OUR DECENTRALIZED EDGE        CENTRALIZED CONTROLLER (SPOF)   STATIC NFPA
+  ------------------------------------------------------------------------------------------------------
+  0% (Baseline Operations)        97.5% ± 0.7%                  93.5% ± 0.9%                    35.4% ± 1.4%
+  10% Severance                   95.8% ± 0.7%                  54.9% ± 1.1%                    36.0% ± 1.4%
+  20% Severance                   93.1% ± 0.7%                  32.9% ± 3.0%                    36.0% ± 1.4%
+  30% (CRITICAL BENCHMARK)        91.1% ± 0.7%                  21.9% ± 2.4%                    35.7% ± 1.5%
+  40% Severance                   88.8% ± 0.7%                  16.3% ± 1.4%                    36.2% ± 1.4%
+  50% Extreme Disaster            86.1% ± 0.7%                  14.6% ± 0.9%                    35.4% ± 1.4%
+
+KEY EMPIRICAL FINDINGS:
+  • At 30% communication severance:
+    - Our system achieves 91.1% survival vs. 21.9% for Centralized SCADA — a 4.2x survival difference!
+  • Resilience Factor:
+    - Even at 50% total communication severance, our system maintains 86.1% survival.
+  • Zero Crush Casualties: Across all 20 random seeds, crush casualties remained at 0.00 due to learned flow splitting.
+  • Clearance Time: Egress completed in 124.1 seconds under active blackout conditions.
+
+[EXISTING ASSETS & PLACEMENT]
+• Primary Assets:
+  - Graph Image: docs/figures/graph_b_severed_comm_survival.png (Right panel or large central plot)
+  - Master Figure: docs/figures/figure_combined_comparisons.png (Panel B)
+  - Data JSON: assets/evaluation_summary.json (Scenario 3: Comms Blackout)
+
+[PRESENTER SCRIPT]
+"Slide 15 presents our primary life-safety result: evacuee survival under progressive physical destruction
+of the communication network, plotted in Graph B.
+
+When all communication links are 100% intact, centralized SCADA achieves 93.5% survival. However, as fire
+and explosions sever industrial conduit trays, centralized performance plummets. At just 10% link severance,
+centralized survival drops to 54.9%. At 30% link severance, it suffers total collapse, plunging to 21.9%—
+killing nearly four out of five workers.
+
+Why does our decentralized ST-TBA-GAT architecture maintain 91.1% survival at 30% link loss—a 4.2x
+improvement?
+First, our edge signs depend only on 1-hop local neighbor updates. Destroying long-distance backbone cables
+does not blind local sign clusters.
+Second, and most importantly, each node possesses our sub-20ms hardware reflexive safety override. Even if
+a node is completely isolated with 100% of its radio links destroyed, its onboard gas sensors detect local
+toxicity and trigger a hardware cutoff—ensuring no worker is ever routed into an active fire or toxic gas plume."
+
+[DEFENSE Q&A PREPARATION]
+• Question: "What happens to your decentralized signs if 100% of communication links are cut?"
+• Bulletproof Answer: "If 100% of radio communication is destroyed, our system gracefully degrades into
+  autonomous localized reflexive nodes. Each sign uses its onboard sensors to block immediately dangerous
+  corridors, and falls back to pre-programmed secondary egress branches without herding into toxic zones."
+
+====================================================================================================
+SLIDE 16: EMBEDDED EDGE HARDWARE, NODE PROVISIONER STUDIO & DEPLOYMENT
+====================================================================================================
+[SLIDE METADATA]
+- Slide Type: Hardware Implementation & Tooling
+- Category: Systems Engineering & Physical Prototyping
+
+[CORE OBJECTIVE]
+Demonstrate constructive reduction to practice by presenting the embedded edge node hardware, the
+automated Node Provisioner Studio GUI, and physical deployment standards.
+
+[VISUAL LAYOUT & SLIDE CONTENT]
+----------------------------------------------------------------------------------------------------
+HEADER:
+  Physical Implementation: Edge Hardware & Node Provisioner Studio
+
+THREE-PART IMPLEMENTATION SHOWCASE:
+
+  1. EMBEDDED EDGE HARDWARE ARCHITECTURE:
+     • Microcontroller: ESP32-S3 (Dual-Core Xtensa LX7 @ 240 MHz, 512 KB SRAM, 8 MB Flash).
+     • Wireless Transceiver: Onboard 2.4 GHz 802.15.4 / BLE 5.0 mesh radio.
+     • Sensor Array:
+       - MQ-135 / MQ-4 Electrochemical Toxic Gas & Methane sensors.
+       - MLX90614 Non-contact I2C Infrared Thermal Pyrometer (-70°C to +380°C).
+     • Actuation Display: WS2812B Addressable RGB LED Directional Matrix + High-Contrast E-Ink.
+     • Life-Safety Circuitry: SPDT Solid-State Relay hardware safety interlock; 3.2V LiFePO4 battery backup.
+
+  2. AUTOMATED NODE PROVISIONER STUDIO GUI (`tools/node_provisioner_gui.py`):
+     • Solves the industrial deployment headache: eliminates error-prone manual YAML config editing.
+     • Features:
+       - Extracts 3D building blueprint coordinates, corridor widths, and exit paths directly from CAD/simulation.
+       - Automated USB auto-detection and firmware flashing across COM/tty ports.
+       - Generates unique cryptographic node IDs and pre-computes static shortest paths into flash memory.
+
+  3. ECONOMIC & INSTALLATION FEASIBILITY:
+     • Total BOM Cost per Edge Node: ~$45.00 USD (vs. $850+ for industrial SCADA/PLC terminals).
+     • Installation Standard: Detailed 15-page installation and wiring guide
+       (`docs/physical_implementation_and_installation_guide.pdf`).
+
+[EXISTING ASSETS & PLACEMENT]
+• Primary Assets:
+  - Tool Script: tools/node_provisioner_gui.py (Display screenshot of Tkinter / Web Provisioner GUI)
+  - Hardware Manual: docs/physical_implementation_and_installation_guide.pdf
+  - Cost Analysis: docs/cost_benefit_analysis.pdf
+  - Embedded Firmware: embedded/observer_node/src/main.cpp & embedded/actuator_node/src/main.cpp
+
+[PRESENTER SCRIPT]
+"We did not stop at simulation. To prove constructive reduction to practice, we engineered physical
+firmware and deployment tooling.
+
+Our edge sign nodes are built around the ESP32-S3 microcontroller, integrating electrochemical gas
+sensors and non-contact infrared thermal sensors. Actuation is driven by high-visibility directional LED
+matrices backed by LiFePO4 battery power.
+
+A major barrier to deploying distributed systems in factories is configuration complexity—manually
+editing configuration files for 500 nodes is impossible. We created the 'Node Provisioner Studio,' a
+desktop and web GUI located in our tools directory. It automatically extracts junction coordinates and
+corridor topologies from the building blueprint, assigns 8-direction compass slots, and flashes the ESP32
+firmware over USB in seconds.
+
+At a bill of materials cost of approximately $45 per node compared to over $850 for commercial SCADA
+terminals, our system delivers enterprise-grade life-safety at a fraction of the cost."
+
+[DEFENSE Q&A PREPARATION]
+• Question: "Are these sensors intrinsically safe for explosive atmospheres (ATEX/IECEx)?"
+• Bulletproof Answer: "In our physical installation guide (docs/physical_implementation_and_installation_guide.pdf),
+  we specify that for Class I Div 1 refinery environments, the ESP32 and sensor modules are housed inside
+  die-cast aluminum NEMA 4X / IP66 flame-proof explosion enclosures with sintered metal flame arrestors."
+
+====================================================================================================
+SLIDE 17: INTERACTIVE DIGITAL TWIN HMI & LIVE DEMONSTRATION GUIDE
+====================================================================================================
+[SLIDE METADATA]
+- Slide Type: Live Demonstration & Software Artifacts
+- Category: Live Defense Demonstration
+
+[CORE OBJECTIVE]
+Guide the evaluators through a live demonstration of the real-time WebSocket digital twin, showing dynamic
+layout switching, live disaster injection, and camera crowd tracking.
+
+[VISUAL LAYOUT & SLIDE CONTENT]
+----------------------------------------------------------------------------------------------------
+HEADER:
+  Live Digital Twin Demonstration: Real-Time HMI & Disaster Injection
+
+FOUR LIVE DEMO CAPABILITIES TO HIGHLIGHT:
+
+  1. REAL-TIME MULTI-TOPOLOGY SWITCHING:
+     - Seamlessly toggle between `petrochemical` 3-floor refinery, `hexagonal_cell` factory,
+       and `u_shaped_hall` logistics hall via dropdown.
+     - Dynamic facility graph and physical topology mask re-render in real time.
+
+  2. INTERACTIVE DISASTER INJECTION:
+     - Point-and-click disaster trigger: Inject toxic gas release at Reactor 2 or flash fire at Tank Farm.
+     - Live visualization of 2D Gaussian plume dispersion and thermal boundary expansion.
+
+  3. EDGE PERCEPTION VIDEO RAIL:
+     - Real-time video stream playback (`demo_assets/pscs_i_crowd_demo_12s.mp4`) showing YOLO crowd tracking.
+     - Visual bounding boxes, density gauge, and multivariate sensor time-series graphs.
+
+  4. REAL-TIME EVACUATION HUD METRICS:
+     - Live counter of Active Evacuees, Evacuated Survivors, and Casualties (Crush vs. Toxic Dose).
+     - Live signboard arrow state changes showing active multi-corridor flow splitting.
+
+STEP-BY-STEP LIVE DEMONSTRATION SCRIPT:
+  • Step 1: Open browser to `http://localhost:8000`. Show normal operations (green arrows active).
+  • Step 2: Click 'Inject Disaster' at `reactor_1` (Floor 1).
+  • Step 3: Observe 1-hop 32-bit gossip propagation: adjacent signs immediately switch to alternate stairwell.
+  • Step 4: Point out doorway flow splitting: crowd bifurcates smoothly across Exit Alpha and Exit Beta.
+  • Step 5: Highlight final HUD statistics: 100% evacuation survival, zero crush casualties.
+
+[EXISTING ASSETS & PLACEMENT]
+• Primary Assets:
+  - Video Demonstration: assets/demo_presentation.mp4 & demo_assets/pscs_i_crowd_demo_12s.mp4
+  - Simulator Application: simulator/server/app.py & simulator/engine/simulation.py
+  - Performance Profiles: assets/performance_profiles.png
+
+[PRESENTER SCRIPT]
+"We will now demonstrate our system live using our real-time digital twin HMI dashboard running on WebSockets.
+On the screen, you observe our three-floor petrochemical facility with 120 evacuees represented as
+dynamic social force particles.
+
+Watch closely as we inject a toxic gas rupture at Reactor Unit 1. Within 15 milliseconds, the local
+observer node detects the gas spike. Notice that only a single 32-bit packet is broadcast to adjacent
+junctions. The dynamic signboards immediately illuminate dual green arrows pointing Northeast and East.
+
+Notice how the crowd bifurcates: rather than everyone jamming at the North Stairwell, fifty percent of
+the workers divert down the secondary corridor. As the toxic plume reaches the staircase, the hardware
+reflexive override triggers, illuminating red 'NO ENTRY' signs. All 120 workers successfully reach
+Muster Assembly Points Alpha and Beta in under 125 seconds with zero casualties."
+
+[DEFENSE Q&A PREPARATION]
+• Question: "What prevents the browser UI from lagging during 250-agent simulations?"
+• Bulletproof Answer: "The simulation engine runs asynchronously in Python using vectorized NumPy operations,
+  broadcasting state dictionaries over low-latency binary WebSockets at 20 Hz. The web frontend renders
+  via HTML5 Canvas hardware acceleration, maintaining a constant 60 FPS."
+
+====================================================================================================
+SLIDE 18: SUMMARY OF CONTRIBUTIONS, FUTURE ROADMAP & DEFENSE Q&A
+====================================================================================================
+[SLIDE METADATA]
+- Slide Type: Conclusion, Contributions & Q&A
+- Category: Summary & Final Defense
+
+[CORE OBJECTIVE]
+Summarize the academic, engineering, and patent contributions, outline future publication milestones,
+and smoothly transition to committee questions.
+
+[VISUAL LAYOUT & SLIDE CONTENT]
+----------------------------------------------------------------------------------------------------
+HEADER:
+  Summary of Contributions, Future Roadmap, and Defense Conclusion
+
+RECAP OF CORE CONTRIBUTIONS:
+  1. Theoretical / AI:
+     First Spatio-Temporal Topology-Bounded GAT-GRU architecture designed for decentralized edge execution,
+     trained via CTDE MAPPO with learned 37-action multi-corridor flow splitting.
+  2. Communications / Embedded:
+     Formulated and validated the 32-bit sparse delta gossip protocol, proving a 98.7% latency reduction
+     and eliminating radio channel saturation on IEEE 802.15.4 meshes.
+  3. Life-Safety / Resilience:
+     Demonstrated 91.1% survival under 30% communication destruction (4.2x higher than centralized SCADA),
+     guaranteed by a sub-20ms hardware reflexive safety override.
+  4. Constructive Reduction to Practice:
+     Developed complete ESP32 firmware, automated Node Provisioner Studio GUI, and physical wiring standards.
+
+PROJECT ROADMAP & PUBLICATION TARGETS:
+  • Milestone 1: Patent Provisional Application Filing (IPO / USPTO, Autumn 2026).
+  • Milestone 2: Hardware Testbed Validation on 10x ESP32-S3 Physical Mesh (Winter 2026).
+  • Milestone 3: Paper Submission to IEEE Transactions on Neural Networks and Learning Systems (IEEE TNNLS)
+    or Elsevier Safety Science.
+
+CLOSING DEFENSE STATEMENT:
+  "Decentralized intelligence ensures that when infrastructure burns, life-safety guidance endures."
+
+CONTACT INFORMATION:
+  • Hrushikesh Waghmare: waghmare_hr@ph.iitr.ac.in
+  • Amareswar Nagam: amareswar_n@ph.iitr.ac.in
+  • Supervisor: Prof. Sudip Roy, Associate Professor, Dept. of CSE, IIT Roorkee
+
+[EXISTING ASSETS & PLACEMENT]
+• Primary Assets:
+  - Full Report PDF: /home/kitretsu/Downloads/vertopal.com_LBP_Assesment_Docs.pdf
+  - Master Evaluation Figure: docs/figures/figure_combined_comparisons.png
+
+[PRESENTER SCRIPT]
+"In conclusion, this project demonstrates that life-safety building protection cannot rely on fragile
+centralized networks. By co-designing decentralized spatial-temporal graph attention, an ultra-compact
+32-bit delta gossip protocol, and deterministic hardware fail-safes, we have created an autonomous
+evacuation system that survives severe industrial disasters.
+
+We have fully documented our theoretical derivations, simulation benchmarks, and embedded firmware in
+our final assessment documentation and patent draft. We sincerely thank our supervisor, Professor Sudip
+Roy sir, for his invaluable guidance throughout this semester.
+
+We are now ready and look forward to your questions. Thank you very much."
+
+[DEFENSE Q&A PREPARATION]
+• Common General Question: "What is the single biggest technical takeaway from your project?"
+• Bulletproof Answer: "The critical takeaway is that edge intelligence must be co-designed with physical
+  communication constraints. Advanced deep learning models are useless in life-safety emergencies if
+  their representation exchange saturates the wireless medium. By eliminating representation transfer
+  and replacing it with 32-bit delta gossip triggering local recurrent memory, we achieve both deep
+  intelligence and unshakeable resilience."
+
+====================================================================================================
+MASTER ASSET DIRECTORY REFERENCE SHEET
+(Keep this sheet open while creating PowerPoint slides)
+====================================================================================================
+IMAGE & FIGURE ASSETS:
+  1. PROGRESS/PPT/system_architecture_flowchart.png
+     - Usage: Slide 2, Slide 5, Slide 6 (Master system architecture)
+  2. PROGRESS/PPT/data_structures_and_flow_chart.png
+     - Usage: Slide 8, Slide 10 (Data structures, Social Force Model, and Force Vectors)
+  3. PROGRESS/PPT/training_and_application_flowchart.png
+     - Usage: Slide 11, Slide 13 (CTDE MAPPO Training Pipeline & Curriculum)
+  4. docs/figures/graph_a_scalability_airtime.png (.pdf)
+     - Usage: Slide 14 (Experiment A: Radio Airtime, Packet Collisions, Frame Size)
+  5. docs/figures/graph_b_severed_comm_survival.png (.pdf)
+     - Usage: Slide 3, Slide 15 (Experiment B: Evacuation Survival under Link Severance)
+  6. docs/figures/figure_combined_comparisons.png (.pdf)
+     - Usage: Slide 14, Slide 15, Slide 18 (Master two-panel evaluation figure)
+  7. assets/performance_profiles.png
+     - Usage: Slide 17 (Performance profiling curves)
+
+VIDEO DEMONSTRATION ASSETS:
+  1. demo_assets/pscs_i_crowd_demo_12s.mp4
+     - 12-second photorealistic synthetic crowd evacuation clip from Unreal Engine PSCS-I benchmark.
+     - Usage: Slide 9, Slide 17 (Embed directly or play during perception and HMI demonstration).
+  2. assets/demo_presentation.mp4
+     - Recorded simulation walkthrough video showing evacuation dynamics.
+     - Usage: Backup presentation asset if live web server demonstration is not used.
+
+DOCUMENTATION & TEXTUAL REFERENCES:
+  1. /home/kitretsu/Downloads/vertopal.com_LBP_Assesment_Docs.pdf
+     - Complete LaTeX assessment report containing all formulas, citations, and formal derivations.
+  2. docs/PATENT_SPECIFICATION_AND_CLAIMS.md
+     - Detailed description of Claims 1 through 10, distinguishing novelty from prior art.
+  3. docs/physical_implementation_and_installation_guide.pdf
+     - Hardware schematics, enclosure standards, and installation engineering.
+  4. docs/COMMUNICATION_PACKET.md & embedded/common/hazard_packet.h
+     - Bit-exact definition of the 32-bit sparse gossip packet.
+  5. assets/evaluation_summary.json
+     - Raw benchmark data across 20 seeds with 95% bootstrap confidence intervals.
+
+CODE ARTIFACTS FOR LIVE DEMONSTRATION:
+  1. tools/node_provisioner_gui.py
+     - Run with: `python3 tools/node_provisioner_gui.py` (Desktop GUI) or `--web` (Browser GUI).
+  2. simulator/server/app.py
+     - Run with: `python3 -m simulator.server.app` for the live WebSockets digital twin.
+  3. scripts/simulate_patent_comparisons.py
+     - Reproduces Graph A and Graph B from scratch.
+
+====================================================================================================
+END OF MASTER PRESENTATION & SLIDE CREATION GUIDE
+====================================================================================================

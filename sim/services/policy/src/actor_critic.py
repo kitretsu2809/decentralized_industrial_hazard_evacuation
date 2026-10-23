@@ -4,9 +4,10 @@ import torch.nn.functional as F
 from typing import List, Tuple, Dict, Optional
 
 from .gat_encoder import create_encoder
+from core.graph.directions import MAX_DIRECTIONS
 
 class Actor(nn.Module):
-    def __init__(self, embedding_dim: int = 64, max_actions: int = 6, hidden_dims: List[int] = [128, 64]):
+    def __init__(self, embedding_dim: int = 64, max_actions: int = MAX_DIRECTIONS, hidden_dims: List[int] = [128, 64]):
         super(Actor, self).__init__()
         self.embedding_dim = embedding_dim
         self.max_actions = max_actions
@@ -72,7 +73,7 @@ class Critic(nn.Module):
         return value
 
 class ActorCritic(nn.Module):
-    def __init__(self, node_feature_dim: int = 8, embedding_dim: int = 64, max_actions: int = 6, num_agents: int = 20, num_heads: int = 4, num_layers: int = 2, dropout: float = 0.1, use_recurrent: bool = True, actor_hidden_dims: List[int] = [128, 64], critic_hidden_dims: List[int] = [256, 128]):
+    def __init__(self, node_feature_dim: int = 8, embedding_dim: int = 64, max_actions: int = MAX_DIRECTIONS, num_agents: int = 20, num_heads: int = 4, num_layers: int = 2, dropout: float = 0.1, use_recurrent: bool = True, actor_hidden_dims: List[int] = [128, 64], critic_hidden_dims: List[int] = [256, 128]):
         super(ActorCritic, self).__init__()
         self.use_recurrent = use_recurrent
         
@@ -161,4 +162,3 @@ class ActorCritic(nn.Module):
     def get_value(self, node_features: torch.Tensor, edge_index: torch.Tensor, hidden_state: Optional[torch.Tensor] = None) -> torch.Tensor:
         embeddings, _ = self.forward_encoder(node_features, edge_index, hidden_state)
         return self.critic(embeddings.unsqueeze(0) if embeddings.dim() == 2 else embeddings)
-

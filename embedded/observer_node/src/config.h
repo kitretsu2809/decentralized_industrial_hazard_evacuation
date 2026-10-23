@@ -4,6 +4,8 @@
 // Node Identity
 #define NODE_ID "observer_f1_office1"
 #define NODE_FLOOR 1
+#define NODE_CAPACITY 30
+#define NODE_DIRECTION_MASK 0x00  // Provision N..NW as bits 0..7
 
 // Sensor Pins
 #define PIN_MQ2_ANALOG 34
