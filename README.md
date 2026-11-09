@@ -66,7 +66,8 @@ Occupants move in continuous 2D coordinate space governed by realistic physical 
 ### 2. Multi-Corridor Flow-Splitting at Junctions
 To eliminate doorway arching, stampedes, and crushing jams ($\rho > 4.5\text{ peds/m}^2$), signboards at multi-way junctions dynamically divide high-density crowds:
 - **Proportional Stream Partitioning**: Incoming arrivals are balanced across all illuminated safe forward paths:
-  $$\text{Corridor Target} = \text{forward\_green}[\text{agent\_id} \pmod{|\text{forward\_green}|}]$$
+  $$\text{Corridor Target}_i = \mathcal{E}_{\text{green}}\big[\, i \pmod{|\mathcal{E}_{\text{green}}|} \,\big]$$
+  where $i$ is the individual evacuee index, and $\mathcal{E}_{\text{green}}$ is the ordered list of illuminated green exit branches (`forward_green`).
 - **Congestion-Aware Learned Detour**: Local and adjacent crowd density are policy observations. The network must choose a two-direction action when flow splitting is beneficial; no hidden shortest-path or congestion heuristic makes that decision for it.
 - **Pure Signboard Compliance**: Evacuees have zero omniscient map knowledge: they strictly follow local illuminated signs, preventing cheating and unrealistic shortcuts.
 
