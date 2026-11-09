@@ -745,6 +745,13 @@ class Simulation:
                                PedestrianState.EVACUATED, PedestrianState.CASUALTY):
                 continue
 
+            # A person spawned in the middle of an edge must finish that edge
+            # before a new local sign decision can branch them elsewhere.
+            # Otherwise the social-force target would be a non-adjacent node,
+            # producing an unrealistic diagonal shortcut across the facility.
+            if agent.corridor_source and agent.corridor_target:
+                continue
+
             target_id = agent.path[0] if agent.path else None
             needs_reroute = not agent.path
             target_is_blocked = False
@@ -810,6 +817,12 @@ class Simulation:
                 continue
 
             h = self.hazard.levels.get(agent.current_node, 0.0)
+            # While backing away from a blocked corridor endpoint, evaluate
+            # exposure at the safe/source endpoint rather than the endpoint
+            # being vacated.
+            if (agent.corridor_source and agent.corridor_target and agent.path
+                    and agent.path[0] == agent.corridor_source):
+                h = self.hazard.levels.get(agent.corridor_source, 0.0)
 
             # 1. ISO 13571:2012 Fractional Effective Dose (FED) Toxicity & Flashover
             if h > 0.02:
@@ -858,13 +871,28 @@ class Simulation:
                 agent.reaction_delay -= self.DT
                 if agent.reaction_delay <= 0.0:
                     agent.state = PedestrianState.MOVING
-                    src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, self.node_floors, agent.floor)
-                    next_hop = self.get_next_waypoint(
-                        src, agent.floor, agent.id,
-                        prev_node=getattr(agent, "prev_node", ""),
-                    )
-                    if next_hop:
-                        agent.path = [next_hop]
+                    if agent.corridor_source and agent.corridor_target:
+                        src, dst = agent.corridor_source, agent.corridor_target
+                        dst_blocked = (
+                            dst in self.hazard.blocked
+                            or self.hazard.levels.get(dst, 0.0) >= 0.80
+                        )
+                        if dst_blocked:
+                            # Reverse along the occupied edge first; do not
+                            # jump diagonally to a third neighbouring node.
+                            agent.current_node = dst
+                            agent.path = [src]
+                        else:
+                            agent.current_node = src
+                            agent.path = [dst]
+                    else:
+                        src = agent.current_node or _nearest_node(agent.x, agent.y, self.node_positions, self.node_floors, agent.floor)
+                        next_hop = self.get_next_waypoint(
+                            src, agent.floor, agent.id,
+                            prev_node=getattr(agent, "prev_node", ""),
+                        )
+                        if next_hop:
+                            agent.path = [next_hop]
 
             elif agent.state in (PedestrianState.MOVING, PedestrianState.REROUTING, PedestrianState.DANGER):
                 if not agent.path:
@@ -881,6 +909,7 @@ class Simulation:
     def _init_agents(self, cluster_node=None, cluster_ratio=0.0):
         self.agents = spawn_pedestrians(
             self.num_evacuees, self.node_positions, self.node_floors,
+            edge_list=self.edge_list,
             cluster_node=cluster_node, cluster_ratio=cluster_ratio)
         # Workers begin in NORMAL operating state dwelling at their stations (no exit paths initially)
         for agent in self.agents:

@@ -2,6 +2,7 @@
 Generates an executive 2-page PDF report for Industrial Evacuation Cost Analysis in Indian Rupees (INR / ₹).
 """
 import weasyprint
+from pathlib import Path
 
 html_content = """
 <!DOCTYPE html>
@@ -475,6 +476,6 @@ The financial business case for plant safety leadership is supported by three ta
 </html>
 """
 
-output_path = "/home/kitretsu/Desktop/LBP/docs/cost_benefit_analysis.pdf"
-weasyprint.HTML(string=html_content).write_pdf(output_path)
+output_path = Path(__file__).resolve().parent / "cost_benefit_analysis.pdf"
+weasyprint.HTML(string=html_content).write_pdf(str(output_path))
 print(f"Successfully generated 2-page INR PDF at: {output_path}")

@@ -93,4 +93,25 @@ coverage.xml
 # ─── Implementation plan (internal agent file) ────────────────────────────────
 implementation_plan.md
 
-# (simulator-baseline branch: all simulator/ code IS tracked)
+# ─── Temporary Scratch & Presentation Assets ─────────────────────────────────
+test_*.py
+test_*.png
+explore_*.py
+generate_*.py
+variant*.png
+orthogonal_floorplan.png
+/*.png
+FINAL/
+FINAL_PRESENTATION_SLIDES_GUIDE.txt
+*.zip
+*.tar.gz
+aedes_audio/
+overleaf_project/
+assets/presentation_demos/
+assets/simulator_ui_demos/
+assets/intro*
+assets/outro*
+assets/simulator_ui_demo.mp4
+docs/*.latex
+docs/*.pdf
+!docs/figures/*.png

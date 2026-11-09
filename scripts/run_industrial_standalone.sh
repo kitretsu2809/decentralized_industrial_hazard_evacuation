@@ -7,9 +7,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$ROOT_DIR"
 
-PYTHON_BIN="/home/kitretsu/miniconda3/envs/ct_pipeline/bin/python"
-if [ ! -f "$PYTHON_BIN" ]; then
-    PYTHON_BIN="python3"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+if ! command -v "$PYTHON_BIN" &> /dev/null; then
+    echo "Python binary '$PYTHON_BIN' not found. Please install Python 3.10+." >&2
+    exit 1
 fi
 
 echo "======================================================================"

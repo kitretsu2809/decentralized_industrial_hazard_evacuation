@@ -34,6 +34,8 @@ class Pedestrian:
     current_node: str = ""       # node the agent is currently at / last passed
     prev_node: str = ""          # previous node the agent just departed from
     target_node: str = ""        # immediate next node
+    corridor_source: str = ""    # endpoint behind a corridor-spawned agent
+    corridor_target: str = ""    # endpoint ahead of a corridor-spawned agent
     desired_speed: float = 1.34  # free-flow egress speed m/s (Weidmann 1992)
     reroute_cooldown: float = 0.0
     age: float = 0.0             # simulation time this agent has existed
@@ -75,18 +77,25 @@ class Pedestrian:
             "color":        self.color(),
             "current_node": self.current_node,
             "target_node":  self.path[0] if self.path else "",
+            "on_corridor":  bool(self.corridor_source and self.corridor_target),
             "path":         self.path[:3],   # only next 3 waypoints for bandwidth
         }
 
 
 def spawn_pedestrians(n: int, node_positions: dict, node_floors: dict,
+                      edge_list: Optional[list] = None,
                       exclude_types: set = None,
                       cluster_node: Optional[str] = None,
-                      cluster_ratio: float = 0.0) -> List[Pedestrian]:
+                      cluster_ratio: float = 0.0,
+                      corridor_ratio: float = 0.18) -> List[Pedestrian]:
     """
     Spawn n pedestrians distributed realistically across all floors in the facility
     (excluding muster exits and stairwells).
     Supports optional high-density crowd cluster placement around a specific node.
+    A small fraction of personnel begin on ordinary corridor segments so the
+    digital twin reflects people walking between work areas, not only people
+    standing exactly on graph vertices. Their ``current_node`` remains the
+    segment source so routing and hazard accounting stay node-based.
     """
     eligible = [
         nid for nid in node_positions
@@ -102,6 +111,17 @@ def spawn_pedestrians(n: int, node_positions: dict, node_floors: dict,
 
     agents = []
     n_clustered = int(n * cluster_ratio) if (cluster_node and cluster_node in node_positions and cluster_ratio > 0.0) else 0
+    corridor_edges = []
+    for item in edge_list or []:
+        src, dst = item[0], item[1]
+        names = f"{src} {dst}".lower()
+        if node_floors.get(src, 1) != node_floors.get(dst, 1):
+            continue
+        if any(token in names for token in ("stair", "hoist", "elevator", "muster", "helipad")):
+            continue
+        if src in node_positions and dst in node_positions:
+            corridor_edges.append((src, dst))
+    n_corridor = int(max(0.0, min(0.45, corridor_ratio)) * max(0, n - n_clustered))
 
     for i in range(n):
         if i < n_clustered:
@@ -113,6 +133,21 @@ def spawn_pedestrians(n: int, node_positions: dict, node_floors: dict,
             ang = random.uniform(0, 2 * math.pi)
             px = x + r * math.cos(ang)
             py = y + r * math.sin(ang)
+            corridor_source, corridor_target = "", ""
+        elif i - n_clustered < n_corridor and corridor_edges:
+            src, dst = random.choice(corridor_edges)
+            sx, sy = node_positions[src]
+            dx, dy = node_positions[dst]
+            fraction = random.uniform(0.15, 0.85)
+            px = sx + (dx - sx) * fraction
+            py = sy + (dy - sy) * fraction
+            length = max(0.1, math.hypot(dx - sx, dy - sy))
+            lateral = random.uniform(-0.55, 0.55)
+            px += -(dy - sy) / length * lateral
+            py += (dx - sx) / length * lateral
+            node = src
+            fl = node_floors.get(src, 1)
+            corridor_source, corridor_target = src, dst
         else:
             node = random.choice(eligible)
             x, y = node_positions[node]
@@ -123,11 +158,14 @@ def spawn_pedestrians(n: int, node_positions: dict, node_floors: dict,
             ang = random.uniform(0, 2 * math.pi)
             px = x + r * math.cos(ang)
             py = y + r * math.sin(ang)
+            corridor_source, corridor_target = "", ""
 
         agents.append(Pedestrian(
             id=i, x=px, y=py,
             floor=fl,
             current_node=node,
+            corridor_source=corridor_source,
+            corridor_target=corridor_target,
             state=PedestrianState.NORMAL,
             desired_speed=max(0.9, random.gauss(1.34, 0.20)),  # Weidmann distribution
             anchor_x=px,

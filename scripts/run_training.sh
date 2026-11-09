@@ -4,10 +4,10 @@
 # automatically selected by the simulator on its next start.
 set -e
 
-PYTHON_EXEC="${PYTHON_EXEC:-/home/kitretsu/miniconda3/envs/ct_pipeline/bin/python}"
+PYTHON_EXEC="${PYTHON_EXEC:-python3}"
 SAVE_DIR="${ST_TBA_GAT_SAVE_DIR:-checkpoints/directional}"
 
-if [ -f "$PYTHON_EXEC" ]; then
+if command -v "$PYTHON_EXEC" &> /dev/null || [ -f "$PYTHON_EXEC" ]; then
     echo "=========================================================="
     echo "Starting four-state direct-signboard ST-TBA-GAT MAPPO training..."
     echo "Checkpoints: $SAVE_DIR"

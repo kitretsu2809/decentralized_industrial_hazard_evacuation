@@ -9,7 +9,7 @@
 [![CUDA](https://img.shields.io/badge/CUDA-12.x-green?logo=nvidia)](https://developer.nvidia.com/cuda-toolkit)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Decentralized multi-agent reinforcement learning for life-safety evacuation guidance in multi-tier industrial chemical facilities. Edge signboards run local Spatio-Temporal GAT-GRU inference to dynamically split high-density crowds across parallel egress corridors — zero cloud dependency, zero embedding transmission over wireless.**
+**Decentralized multi-agent reinforcement learning for life-safety evacuation guidance in multi-tier industrial chemical facilities. Edge signboards run local Spatio-Temporal GAT-GRU inference to dynamically split high-density crowds across parallel egress corridors (zero cloud dependency, zero embedding transmission over wireless).**
 
 </div>
 
@@ -68,7 +68,7 @@ To eliminate doorway arching, stampedes, and crushing jams ($\rho > 4.5\text{ pe
 - **Proportional Stream Partitioning**: Incoming arrivals are balanced across all illuminated safe forward paths:
   $$\text{Corridor Target} = \text{forward\_green}[\text{agent\_id} \pmod{|\text{forward\_green}|}]$$
 - **Congestion-Aware Learned Detour**: Local and adjacent crowd density are policy observations. The network must choose a two-direction action when flow splitting is beneficial; no hidden shortest-path or congestion heuristic makes that decision for it.
-- **Pure Signboard Compliance**: Evacuees have zero omniscient map knowledge—they strictly follow local illuminated signs, preventing cheating and unrealistic shortcuts.
+- **Pure Signboard Compliance**: Evacuees have zero omniscient map knowledge: they strictly follow local illuminated signs, preventing cheating and unrealistic shortcuts.
 
 ### 3. Spatial Variance & Doorway Arching Penalties in MARL
 The MARL team reward actively optimizes flow distribution and punishes crowding imbalances:
@@ -196,7 +196,7 @@ Training runs with **Centralized Training with Decentralized Execution (CTDE)** 
 |---|:---:|:---:|---|---|
 | **Stage 1: Primary Arterial Cut** | $0.00\text{--}0.25$ | $30\text{--}90$ | Single corridor cut at `reactor_2` / `pump_house` | Mild crowd, learning baseline egress |
 | **Stage 2: Stairwell Flashover** | $0.25\text{--}0.50$ | $90\text{--}170$ | Vertical stairwell cut (`stair_north_f1`, `stair_south_f1`) | Multi-floor descent diversion |
-| **Stage 3: Bottleneck Arching & Flow-Splitting** | $0.50\text{--}0.75$ | $170\text{--}290$ | Choke point cuts (`pipe_rack_junc_1`, `corridor_perimeter_n`) | **35–60% crowd clusters** at bottleneck junctions; learns parallel load splitting |
+| **Stage 3: Bottleneck Arching & Flow-Splitting** | $0.50\text{--}0.75$ | $170\text{--}290$ | Choke point cuts (`pipe_rack_junc_1`, `corridor_perimeter_n`) | **35% to 60% crowd clusters** at bottleneck junctions; learns parallel load splitting |
 | **Stage 4: Compound Disaster Stress** | $0.75\text{--}1.00$ | $290\text{--}400+$ | Multi-hazard (Fire + Gas + Structural blast) | Flashover intensity up to 0.98; compound disasters |
 
 ### GPU Training Commands
@@ -342,15 +342,15 @@ Tests verified:
 
 ## References
 
-1. **MAPPO**: Yu et al., 2022 — *"The Surprising Effectiveness of PPO in Cooperative Multi-Agent Games"* — [arXiv:2103.01955](https://arxiv.org/abs/2103.01955)
-2. **GATv2**: Brody et al., 2022 — *"How Attentive are Graph Attention Networks?"* — [ICLR 2022](https://arxiv.org/abs/2105.14491)
-3. **Social Force Model**: Helbing & Molnár, 1995 — *"Social force model for pedestrian dynamics"* — [Phys. Rev. E](https://journals.aps.org/pre/abstract/10.1103/PhysRevE.51.4282)
-4. **Pedestrian Speed-Density Relations**: Weidmann, 1992 — *"Transporttechnik der Fussgänger"* — ETH Zürich, IVT Nr. 90
-5. **Toxic Inhalation FED Standard**: ISO 13571:2012 — *"Life-threatening components of fire — Guidelines for the estimation of time to compromised tenability"*
-6. **NFPA 101**: National Fire Protection Association — *"Life Safety Code"* (2024 edition)
+1. **MAPPO**: Yu et al., 2022, *"The Surprising Effectiveness of PPO in Cooperative Multi-Agent Games"*, [arXiv:2103.01955](https://arxiv.org/abs/2103.01955)
+2. **GATv2**: Brody et al., 2022, *"How Attentive are Graph Attention Networks?"*, [ICLR 2022](https://arxiv.org/abs/2105.14491)
+3. **Social Force Model**: Helbing & Molnár, 1995, *"Social force model for pedestrian dynamics"*, [Phys. Rev. E](https://journals.aps.org/pre/abstract/10.1103/PhysRevE.51.4282)
+4. **Pedestrian Speed-Density Relations**: Weidmann, 1992, *"Transporttechnik der Fussgänger"*, ETH Zürich, IVT Nr. 90
+5. **Toxic Inhalation FED Standard**: ISO 13571:2012, *"Life-threatening components of fire: Guidelines for the estimation of time to compromised tenability"*
+6. **NFPA 101**: National Fire Protection Association, *"Life Safety Code"* (2024 edition)
 
 ---
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
+MIT License (see [LICENSE](LICENSE) for details).

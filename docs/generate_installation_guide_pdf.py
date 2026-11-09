@@ -9,6 +9,7 @@ Covers:
 """
 import sys
 import os
+from pathlib import Path
 import weasyprint
 
 def generate_pdf():
@@ -648,14 +649,12 @@ Before declaring any industrial facility zone active, the commissioning engineer
 </body>
 </html>
 """
-    pdf_path = "/home/kitretsu/Desktop/LBP/docs/physical_implementation_and_installation_guide.pdf"
-    artifact_path = "/home/kitretsu/.gemini/antigravity/brain/d60232ae-02a1-4017-bea5-a182aef15430/physical_implementation_and_installation_guide.pdf"
+    pdf_path = Path(__file__).resolve().parent / "physical_implementation_and_installation_guide.pdf"
     
     print("Generating PDF with WeasyPrint...")
     html = weasyprint.HTML(string=html_content)
-    html.write_pdf(pdf_path)
-    html.write_pdf(artifact_path)
-    print(f"Generated PDF at: {pdf_path} and {artifact_path}")
+    html.write_pdf(str(pdf_path))
+    print(f"Generated PDF at: {pdf_path}")
 
 if __name__ == "__main__":
     generate_pdf()

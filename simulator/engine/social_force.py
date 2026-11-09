@@ -121,6 +121,10 @@ class SocialForceModel:
                         agent.prev_node = agent.current_node
                         agent.current_node = target_id
                         agent.path = agent.path[1:]
+                        if target_id in (getattr(agent, "corridor_source", ""),
+                                         getattr(agent, "corridor_target", "")):
+                            agent.corridor_source = ""
+                            agent.corridor_target = ""
                         if not agent.path:
                             continue
                         next_id = agent.path[0]
